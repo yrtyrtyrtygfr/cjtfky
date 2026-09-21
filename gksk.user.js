@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         国开刷点击次数和时长
+// @name         国开无敌自动刷课+次数和时长
 // @namespace    https://scriptcat.org/
 // @version      2.9.0
 // @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动静音播放完再继续｜苹果风格UI｜ESC停止｜后台也继续运行
@@ -8,7 +8,7 @@
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
 // @grant        none
 // @run-at       document-start
-// @license      GPL-3.0-or-later
+// @license      MIT
 // ==/UserScript==
 (function () {
     'use strict';
