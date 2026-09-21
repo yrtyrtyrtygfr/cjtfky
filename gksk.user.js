@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         国开刷点击次数和时长
+// @name         新国开无敌刷课（增加可以重复刷课以计时长和点击）
 // @namespace    https://scriptcat.org/
 // @version      2.9.1
 // @updateURL    https://cdn.jsdelivr.net/gh/yrtyrtyrtygfr/cjtfky@main/gksk.user.js
