@@ -8,7 +8,7 @@
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
 // @grant        none
 // @run-at       document-start
-// @license      MIT
+// @license      MPL-2.0
 // ==/UserScript==
 (function () {
     'use strict';
