@@ -8,7 +8,7 @@
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
 // @grant        none
 // @run-at       document-start
-// @license 二开请联系作者
+// @license      GPL-3.0-or-later
 // ==/UserScript==
 (function () {
     'use strict';
