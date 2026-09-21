@@ -1,7 +1,9 @@
 // ==UserScript==
 // @name         国开刷点击次数和时长
 // @namespace    https://scriptcat.org/
-// @version      2.9.0
+// @version      2.9.1
+// @updateURL    https://cdn.jsdelivr.net/gh/yrtyrtyrtygfr/cjtfky@main/gksk.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/yrtyrtyrtygfr/cjtfky@main/gksk.user.js
 // @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动静音播放完再继续｜苹果风格UI｜ESC停止｜后台也继续运行
 // @author       You
 // @match        *://lms.ouchn.cn/*
