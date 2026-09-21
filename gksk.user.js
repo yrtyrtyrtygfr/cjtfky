@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         新国开自动刷课（可重复刷增加时长和点击）
+// @name         国开刷点击次数和时长
 // @namespace    https://scriptcat.org/
 // @version      2.9.1
 // @updateURL    https://cdn.jsdelivr.net/gh/yrtyrtyrtygfr/cjtfky@main/gksk.user.js
@@ -10,6 +10,7 @@
 // @icon         https://cdn.jsdelivr.net/gh/yrtyrtyrtygfr/cjtfky@2caf2337025d9bc8779c692acf1d6469fe372637/gd.png
 // @grant        none
 // @run-at       document-start
+// @license 二开请联系作者
 // ==/UserScript==
 (function () {
     'use strict';
