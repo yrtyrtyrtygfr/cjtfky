@@ -10,7 +10,7 @@
 // @icon         https://cdn.jsdelivr.net/gh/yrtyrtyrtygfr/cjtfky@2caf2337025d9bc8779c692acf1d6469fe372637/gd.png
 // @grant        none
 // @run-at       document-start
-// @license 二开请联系作者
+// @license      GPL-3.0-or-later
 // ==/UserScript==
 (function () {
     'use strict';
