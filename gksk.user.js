@@ -1,14 +1,13 @@
 // ==UserScript==
 // @name         国开无敌自动刷课+次数和时长
 // @namespace    https://scriptcat.org/
-// @version      4.3.2
-// @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动静音播放完再继续｜苹果风格UI｜ESC停止｜后台也继续运行｜卡密通授权
+// @version      4.4.1
+// @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动静音播放完再继续｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器
 // @author       You
 // @match        *://lms.ouchn.cn/*
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
 // @grant        GM_xmlhttpRequest
-// @connect      keyt.cn
-// @connect      www.keyt.cn
+// @connect      8.155.160.178
 // @run-at       document-start
 // @license      MPL-2.0
 // ==/UserScript==
@@ -17,51 +16,14 @@
     if (window.__QCC_INSTALLED__) return;
     window.__QCC_INSTALLED__ = true;
 
-    /* ========== 卡密通授权 ========== */
-    const AUTH_STORAGE_KEY = 'qcc_auth_code_v2';
-    const AUTH_EXPIRE_KEY  = 'qcc_auth_expire_v2';
-    const KEYT_USERNAME = 'cjtfky123';
-    const KEYT_APP_NAME = 'b';
-    const KEYT_SIGN_KEY = '1cc35a6aa4b3b60f82100301574ca9a9';
-    const KEYT_BASE_URL = `https://www.keyt.cn/kami/${KEYT_USERNAME}/check.php`;
-    const TS_MAX_DIFF = 120, HEARTBEAT_MS = 50000, HEARTBEAT_FAIL_LIMIT = 5;
+    /* ========== 自建授权服务器 ========== */
+    const AUTH_STORAGE_KEY = 'qcc_auth_code_v3';    // v2 → v3，与 keyt 时代缓存隔离
+    const AUTH_EXPIRE_KEY  = 'qcc_auth_expire_v3';
+    const AUTH_SERVER = 'http://8.155.160.178:3000';   // 你的授权服务器地址
+    const HEARTBEAT_MS = 50000, HEARTBEAT_FAIL_LIMIT = 3;   // 对齐 B站脚本：3 次失败就踢
     let authCode = '', authorized = false;
 
-    function md5(str) {
-        function RL(l,i){return (l<<i)|(l>>>(32-i));}
-        function AU(lX,lY){var lX4,lY4,lX8,lY8,lR;lX8=(lX&0x80000000);lY8=(lY&0x80000000);lX4=(lX&0x40000000);lY4=(lY&0x40000000);lR=(lX&0x3FFFFFFF)+(lY&0x3FFFFFFF);if(lX4&lY4)return(lR^0x80000000^lX8^lY8);if(lX4|lY4){if(lR&0x40000000)return(lR^0xC0000000^lX8^lY8);else return(lR^0x40000000^lX8^lY8);}else return(lR^lX8^lY8);}
-        function F(x,y,z){return(x&y)|((~x)&z);}function G(x,y,z){return(x&z)|(y&(~z));}function H(x,y,z){return(x^y^z);}function I(x,y,z){return(y^(x|(~z)));}
-        function FF(a,b,c,d,x,s,ac){a=AU(a,AU(AU(F(b,c,d),x),ac));return AU(RL(a,s),b);}
-        function GG(a,b,c,d,x,s,ac){a=AU(a,AU(AU(G(b,c,d),x),ac));return AU(RL(a,s),b);}
-        function HH(a,b,c,d,x,s,ac){a=AU(a,AU(AU(H(b,c,d),x),ac));return AU(RL(a,s),b);}
-        function II(a,b,c,d,x,s,ac){a=AU(a,AU(AU(I(b,c,d),x),ac));return AU(RL(a,s),b);}
-        function CWA(s){var lWC,lML=s.length;var lNW1=lML+8;var lNW2=(lNW1-(lNW1%64))/64;var lNW=(lNW2+1)*16;var lWA=Array(lNW-1);var lBP=0,lBC=0;while(lBC<lML){lWC=(lBC-(lBC%4))/4;lBP=(lBC%4)*8;lWA[lWC]=(lWA[lWC]|(s.charCodeAt(lBC)<<lBP));lBC++;}lWC=(lBC-(lBC%4))/4;lBP=(lBC%4)*8;lWA[lWC]=lWA[lWC]|(0x80<<lBP);lWA[lNW-2]=lML<<3;lWA[lNW-1]=lML>>>29;return lWA;}
-        function W2H(lV){var v="",t="",b,c;for(c=0;c<=3;c++){b=(lV>>>(c*8))&255;t="0"+b.toString(16);v=v+t.substr(t.length-2,2);}return v;}
-        function UE(s){s=s.replace(/\r\n/g,"\n");var o="";for(var n=0;n<s.length;n++){var c=s.charCodeAt(n);if(c<128)o+=String.fromCharCode(c);else if((c>127)&&(c<2048)){o+=String.fromCharCode((c>>6)|192);o+=String.fromCharCode((c&63)|128);}else{o+=String.fromCharCode((c>>12)|224);o+=String.fromCharCode(((c>>6)&63)|128);o+=String.fromCharCode((c&63)|128);}}return o;}
-        var x=[],k,AA,BB,CC,DD,a,b,c,d;var S11=7,S12=12,S13=17,S14=22,S21=5,S22=9,S23=14,S24=20,S31=4,S32=11,S33=16,S34=23,S41=6,S42=10,S43=15,S44=21;
-        str=UE(str);x=CWA(str);a=0x67452301;b=0xEFCDAB89;c=0x98BADCFE;d=0x10325476;
-        for(k=0;k<x.length;k+=16){AA=a;BB=b;CC=c;DD=d;
-            a=FF(a,b,c,d,x[k+0],S11,0xD76AA478);d=FF(d,a,b,c,x[k+1],S12,0xE8C7B756);c=FF(c,d,a,b,x[k+2],S13,0x242070DB);b=FF(b,c,d,a,x[k+3],S14,0xC1BDCEEE);
-            a=FF(a,b,c,d,x[k+4],S11,0xF57C0FAF);d=FF(d,a,b,c,x[k+5],S12,0x4787C62A);c=FF(c,d,a,b,x[k+6],S13,0xA8304613);b=FF(b,c,d,a,x[k+7],S14,0xFD469501);
-            a=FF(a,b,c,d,x[k+8],S11,0x698098D8);d=FF(d,a,b,c,x[k+9],S12,0x8B44F7AF);c=FF(c,d,a,b,x[k+10],S13,0xFFFF5BB1);b=FF(b,c,d,a,x[k+11],S14,0x895CD7BE);
-            a=FF(a,b,c,d,x[k+12],S11,0x6B901122);d=FF(d,a,b,c,x[k+13],S12,0xFD987193);c=FF(c,d,a,b,x[k+14],S13,0xA679438E);b=FF(b,c,d,a,x[k+15],S14,0x49B40821);
-            a=GG(a,b,c,d,x[k+1],S21,0xF61E2562);d=GG(d,a,b,c,x[k+6],S22,0xC040B340);c=GG(c,d,a,b,x[k+11],S23,0x265E5A51);b=GG(b,c,d,a,x[k+0],S24,0xE9B6C7AA);
-            a=GG(a,b,c,d,x[k+5],S21,0xD62F105D);d=GG(d,a,b,c,x[k+10],S22,0x02441453);c=GG(c,d,a,b,x[k+15],S23,0xD8A1E681);b=GG(b,c,d,a,x[k+4],S24,0xE7D3FBC8);
-            a=GG(a,b,c,d,x[k+9],S21,0x21E1CDE6);d=GG(d,a,b,c,x[k+14],S22,0xC33707D6);c=GG(c,d,a,b,x[k+3],S23,0xF4D50D87);b=GG(b,c,d,a,x[k+8],S24,0x455A14ED);
-            a=GG(a,b,c,d,x[k+13],S21,0xA9E3E905);d=GG(d,a,b,c,x[k+2],S22,0xFCEFA3F8);c=GG(c,d,a,b,x[k+7],S23,0x676F02D9);b=GG(b,c,d,a,x[k+12],S24,0x8D2A4C8A);
-            a=HH(a,b,c,d,x[k+5],S31,0xFFFA3942);d=HH(d,a,b,c,x[k+8],S32,0x8771F681);c=HH(c,d,a,b,x[k+11],S33,0x6D9D6122);b=HH(b,c,d,a,x[k+14],S34,0xFDE5380C);
-            a=HH(a,b,c,d,x[k+1],S31,0xA4BEEA44);d=HH(d,a,b,c,x[k+4],S32,0x4BDECFA9);c=HH(c,d,a,b,x[k+7],S33,0xF6BB4B60);b=HH(b,c,d,a,x[k+10],S34,0xBEBFBC70);
-            a=HH(a,b,c,d,x[k+13],S31,0x289B7EC6);d=HH(d,a,b,c,x[k+0],S32,0xEAA127FA);c=HH(c,d,a,b,x[k+3],S33,0xD4EF3085);b=HH(b,c,d,a,x[k+6],S34,0x04881D05);
-            a=HH(a,b,c,d,x[k+9],S31,0xD9D4D039);d=HH(d,a,b,c,x[k+12],S32,0xE6DB99E5);c=HH(c,d,a,b,x[k+15],S33,0x1FA27CF8);b=HH(b,c,d,a,x[k+2],S34,0xC4AC5665);
-            a=II(a,b,c,d,x[k+0],S41,0xF4292244);d=II(d,a,b,c,x[k+7],S42,0x432AFF97);c=II(c,d,a,b,x[k+14],S43,0xAB9423A7);b=II(b,c,d,a,x[k+5],S44,0xFC93A039);
-            a=II(a,b,c,d,x[k+12],S41,0x655B59C3);d=II(d,a,b,c,x[k+3],S42,0x8F0CCC92);c=II(c,d,a,b,x[k+10],S43,0xFFEFF47D);b=II(b,c,d,a,x[k+1],S44,0x85845DD1);
-            a=II(a,b,c,d,x[k+8],S41,0x6FA87E4F);d=II(d,a,b,c,x[k+15],S42,0xFE2CE6E0);c=II(c,d,a,b,x[k+6],S43,0xA3014314);b=II(b,c,d,a,x[k+13],S44,0x4E0811A1);
-            a=II(a,b,c,d,x[k+4],S41,0xF7537E82);d=II(d,a,b,c,x[k+11],S42,0xBD3AF235);c=II(c,d,a,b,x[k+2],S43,0x2AD7D2BB);b=II(b,c,d,a,x[k+9],S44,0xEB86D391);
-            a=AU(a,AA);b=AU(b,BB);c=AU(c,CC);d=AU(d,DD);
-        }
-        return (W2H(a)+W2H(b)+W2H(c)+W2H(d)).toLowerCase();
-    }
-
+    /* 设备号（供后台绑定使用） */
     const KEYT_DEVICE_ID = (() => {
         try {
             let id = localStorage.getItem('qcc_device_id');
@@ -76,102 +38,112 @@
 
     let __syncAuthUI = null, heartbeatTimer = null, heartbeatFailCount = 0;
 
-    function keytGet(url) {
+    /* ---- 通用 POST ---- */
+    function apiPost(path, data) {
         return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({ method: 'GET', url, timeout: 10000,
-                onload: r => resolve(r.responseText || ''),
-                onerror: e => reject(e), ontimeout: () => reject(new Error('timeout')) });
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: AUTH_SERVER + path,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify(data || {}),
+                timeout: 10000,
+                onload: r => {
+                    try { resolve(JSON.parse(r.responseText || '{}')); }
+                    catch (e) { reject(new Error('bad json')); }
+                },
+                onerror: e => reject(e),
+                ontimeout: () => reject(new Error('timeout'))
+            });
         });
     }
-    function verifyResponse(raw) {
-        if (!raw) return null;
-        const si = raw.indexOf('|sign=');
-        if (si === -1) return null;
-        const body = raw.substring(0, si), sign = raw.substring(si + 6).trim();
-        if (md5(body + KEYT_SIGN_KEY) !== sign) return null;
-        const lp = body.lastIndexOf('|');
-        if (lp === -1) return null;
-        const ts = parseInt(body.substring(lp + 1), 10);
-        if (isNaN(ts)) return null;
-        if (Math.abs(Math.floor(Date.now() / 1000) - ts) > TS_MAX_DIFF) return null;
-        return body.substring(0, lp);
-    }
-    async function getCardSwitch() {
-        const ts = Math.floor(Date.now() / 1000);
-        try {
-            const raw = await keytGet(`${KEYT_BASE_URL}?act=get_switch&app=${encodeURIComponent(KEYT_APP_NAME)}&t=${ts}`);
-            const biz = verifyResponse(raw);
-            if (biz) { if (biz.includes('CARD_ON')) return 'CARD_ON'; if (biz.includes('CARD_OFF')) return 'CARD_OFF'; }
-        } catch (e) {}
-        return 'CARD_ON';
-    }
+
+    /* ---- 请求验证：POST /api/verify {card, mac} -> {ok, code, msg, days} ---- */
     async function requestVerify(card, mac) {
-        const ts = Math.floor(Date.now() / 1000);
-        return verifyResponse(await keytGet(`${KEYT_BASE_URL}?card=${encodeURIComponent(card)}&mac=${encodeURIComponent(mac)}&app=${encodeURIComponent(KEYT_APP_NAME)}&heart=1&t=${ts}`));
+        try {
+            const res = await apiPost('/api/verify', { card, mac });
+            return res && typeof res === 'object' ? res : null;
+        } catch (e) { return null; }
     }
-    function transMsg(code) {
-        const m = { activate: '激活成功', valid: '验证通过', permanent: '终身有效', expired: '卡密已过期', banned: '卡密已被禁用',
-            device_mismatch: '设备不匹配（请在后台解绑该卡密或改用新卡密）', online_limit_reached: '在线设备数已满', invalid_card: '卡密无效' };
-        return m[code] || code;
-    }
-    function parseRT(biz) {
-        const p = biz.split('|');
-        if (p.length >= 3) {
-            const d = parseInt(p[2], 10);
-            const mn = p.length >= 4 ? parseInt(p[3], 10) : 0;
-            if (!isNaN(d)) return { days: d, minutes: isNaN(mn) ? 0 : mn };
-        }
-        return null;
-    }
+
+    /* ---- 验证并保存授权状态 ---- */
     async function verifyAuthCode(rawCode) {
         const code = (rawCode || '').trim();
         if (!code) return { ok: false, msg: '请输入卡密' };
         try {
-            const biz = await requestVerify(code, KEYT_DEVICE_ID);
-            if (!biz) return { ok: false, msg: '❌ 验证失败：签名错误或网络异常' };
-            if (biz.startsWith('ok|')) {
+            const res = await requestVerify(code, KEYT_DEVICE_ID);
+            if (!res) return { ok: false, msg: '❌ 网络请求失败，请检查网络后重试' };
+
+            if (res.ok) {
                 authorized = true; authCode = code;
                 localStorage.setItem(AUTH_STORAGE_KEY, code);
-                const ti = parseRT(biz);
-                if (ti) localStorage.setItem(AUTH_EXPIRE_KEY, String(Date.now() + ti.days * 86400000 + ti.minutes * 60000));
-                else localStorage.removeItem(AUTH_EXPIRE_KEY);
+
+                const days = parseInt(res.days, 10);
+                if (!isNaN(days) && days > 0) {
+                    localStorage.setItem(AUTH_EXPIRE_KEY, String(Date.now() + days * 86400000));
+                } else {
+                    localStorage.removeItem(AUTH_EXPIRE_KEY);   // 永久
+                }
                 startHeartbeat();
                 if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
-                return { ok: true, msg: ti ? `✅ 验证通过！剩余 ${ti.days} 天 ${ti.minutes} 分钟` : '✅ 验证通过（终身有效）' };
+
+                const tail = (!isNaN(days) && days > 0) ? `（剩余 ${days} 天）` : '（终身有效）';
+                return { ok: true, msg: '✅ ' + (res.msg || '验证通过') + tail };
             }
-            if (biz.startsWith('error|')) return { ok: false, msg: '❌ ' + transMsg(biz.split('|')[1]) };
-            return { ok: false, msg: '❌ ' + biz };
+            return { ok: false, msg: '❌ ' + (res.msg || (res.code === 'device_mismatch'
+                ? '设备不匹配（请在后台解绑该卡密或改用新卡密）' : '验证失败')) };
         } catch (e) { return { ok: false, msg: '❌ 网络请求失败，请检查网络后重试' }; }
     }
+
+    /* ---- 心跳 ---- */
     function startHeartbeat() {
         stopHeartbeat(); heartbeatFailCount = 0;
         heartbeatTimer = setInterval(async () => {
             if (!authorized || !authCode) return;
-            try {
-                const biz = await requestVerify(authCode, KEYT_DEVICE_ID);
-                if (biz && biz.startsWith('ok|')) heartbeatFailCount = 0;
-                else {
-                    heartbeatFailCount++;
-                    if (heartbeatFailCount >= HEARTBEAT_FAIL_LIMIT) {
-                        authorized = false; stopHeartbeat();
-                        if (typeof stopClicking === 'function') stopClicking();
-                        localStorage.removeItem(AUTH_STORAGE_KEY); localStorage.removeItem(AUTH_EXPIRE_KEY);
-                        if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
-                        if (typeof setStatus === 'function') setStatus('❌ 卡密心跳失效，请重新验证', '');
-                    }
-                }
-            } catch (e) { heartbeatFailCount++; }
+            const res = await requestVerify(authCode, KEYT_DEVICE_ID);
+            if (res && res.ok) { heartbeatFailCount = 0; return; }
+            heartbeatFailCount++;
+            if (heartbeatFailCount >= HEARTBEAT_FAIL_LIMIT) {
+                authorized = false; stopHeartbeat();
+                if (typeof stopClicking === 'function') stopClicking();
+                localStorage.removeItem(AUTH_STORAGE_KEY);
+                localStorage.removeItem(AUTH_EXPIRE_KEY);
+                if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
+                if (typeof setStatus === 'function') setStatus('❌ 卡密心跳失效，请重新验证', '');
+            }
         }, HEARTBEAT_MS);
     }
     function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } heartbeatFailCount = 0; }
+
+    /* ---- 本地缓存自动登录：★ 先联网确认，服务器不认就清缓存 ---- */
     async function loadAuthFromStorage() {
-        try {
-            const saved = (localStorage.getItem(AUTH_STORAGE_KEY) || '').trim();
-            if (!saved) return;
-            const ex = parseInt(localStorage.getItem(AUTH_EXPIRE_KEY) || '0', 10);
-            if (ex && ex < Date.now()) { localStorage.removeItem(AUTH_STORAGE_KEY); localStorage.removeItem(AUTH_EXPIRE_KEY); return; }
-            authCode = saved; authorized = true; startHeartbeat();
-        } catch (e) {}
+        let saved = '';
+        try { saved = (localStorage.getItem(AUTH_STORAGE_KEY) || '').trim(); } catch (e) { return; }
+        if (!saved) return;
+
+        // 本地过期时间做快速失败
+        const ex = parseInt(localStorage.getItem(AUTH_EXPIRE_KEY) || '0', 10);
+        if (ex && ex < Date.now()) {
+            try {
+                localStorage.removeItem(AUTH_STORAGE_KEY);
+                localStorage.removeItem(AUTH_EXPIRE_KEY);
+            } catch (e) {}
+            return;
+        }
+
+        // ★ 必须联网确认一次，服务器不认就清缓存，绝不凭本地缓存放行
+        const res = await requestVerify(saved, KEYT_DEVICE_ID);
+        if (!res || !res.ok) {
+            try {
+                localStorage.removeItem(AUTH_STORAGE_KEY);
+                localStorage.removeItem(AUTH_EXPIRE_KEY);
+            } catch (e) {}
+            return;
+        }
+
+        // 服务器认了，才授权
+        authCode = saved;
+        authorized = true;
+        startHeartbeat();
     }
 
     /* ========== Shadow DOM ========== */
@@ -232,7 +204,6 @@
         for (let i = 0; i < 4 && cur; i++) { try { if (getComputedStyle(cur).cursor === 'pointer') return cur; } catch (e) {} cur = cur.parentElement; }
         return el;
     }
-
     function isBoldText(el) {
         if (!el || el.nodeType !== 1) return false;
         const tag = (el.tagName || '').toUpperCase();
@@ -380,7 +351,6 @@
 
         try {
             for (let loop = 0; loop < MAX_LOOPS; loop++) {
-                // 找所有"未展开"的 svg 箭头
                 const arrows = [];
                 const seen = new Set();
 
@@ -396,7 +366,7 @@
                         if (!svg) continue;
 
                         const style = svg.getAttribute('style') || '';
-                        if (style.includes('rotate(180deg)')) continue;   // 已展开 → 跳过
+                        if (style.includes('rotate(180deg)')) continue;   // 已展开
 
                         arrows.push(svg);
                     }
@@ -407,11 +377,8 @@
                 setStatus(`展开中… 剩 ${arrows.length} 个，已点 ${totalClicked}`, 'running');
 
                 for (const svg of arrows) {
-                    if (!svg.isConnected) continue;   // DOM 重建，跳过，下轮重扫
-                    try {
-                        realClick(svg);
-                        totalClicked++;
-                    } catch (e) {}
+                    if (!svg.isConnected) continue;
+                    try { realClick(svg); totalClicked++; } catch (e) {}
                     await sleep(40);
                 }
 
@@ -736,7 +703,10 @@
         });
         document.getElementById('qcc-device-reset').addEventListener('click', () => {
             if (!confirm('确定重置设备号？需重新在后台绑定。')) return;
-            localStorage.removeItem('qcc_device_id'); location.reload();
+            localStorage.removeItem('qcc_device_id');
+            localStorage.removeItem(AUTH_STORAGE_KEY);
+            localStorage.removeItem(AUTH_EXPIRE_KEY);
+            location.reload();
         });
 
         let esc = null;
@@ -786,7 +756,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v4.3.0</span>
+                    <span class="qcc-badge">v4.4.1</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
@@ -1080,7 +1050,6 @@
             if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
             setStatus(authorized ? '已授权，可以开始使用' : '等待操作', '');
         })();
-        getCardSwitch().catch(() => {});
     }
 
     function safeBuildPanel() {
