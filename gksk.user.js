@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         国开无敌自动刷课+次数和时长
 // @namespace    https://scriptcat.org/
-// @version      4.3.1
+// @version      4.3.2
 // @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动静音播放完再继续｜苹果风格UI｜ESC停止｜后台也继续运行｜卡密通授权
 // @author       You
 // @match        *://lms.ouchn.cn/*
