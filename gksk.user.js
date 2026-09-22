@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         国开无敌自动刷课+次数和时长
 // @namespace    https://scriptcat.org/
-// @version      4.2.0
+// @version      4.3.1
 // @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动静音播放完再继续｜苹果风格UI｜ESC停止｜后台也继续运行｜卡密通授权
 // @author       You
 // @match        *://lms.ouchn.cn/*
@@ -363,96 +363,70 @@
     }
 
     /* ============================================================
-     * ★ 展开核心：`[class*="sub-menu-title"]` + DOM 路径去重
+     * ★ 展开核心：用 svg 的 rotate(180deg) 判断展开状态，天然去重
      * ============================================================ */
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    function getDomPath(el, maxDepth = 20) {
-        const path = [];
-        let cur = el;
-        let d = 0;
-        while (cur && cur.parentElement && d < maxDepth) {
-            const idx = Array.from(cur.parentElement.children).indexOf(cur);
-            path.unshift(idx);
-            cur = cur.parentElement;
-            d++;
-        }
-        return path.join('/');
-    }
+    async function expandAllCollapsed() {
+        if (expanding) return;
+        expanding = true;
+        __leftNavCache = null;
 
-    function findCollapsedItems() {
-        const list = [];
-        const seen = new Set();
-        for (const root of getAllRoots()) {
-            let all;
-            try { all = root.querySelectorAll('[class*="sub-menu-title"]'); } catch (e) { continue; }
-            for (const el of all) {
-                if (seen.has(el)) continue;
-                seen.add(el);
-                if (panel && panel.contains(el)) continue;
-                list.push(el);
-            }
-        }
-        return list;
-    }
+        const startTime = Date.now();
+        let totalClicked = 0;
+        const MAX_LOOPS = 50;
 
-async function expandAllCollapsed() {
-    if (expanding) return;
-    expanding = true;
-    __leftNavCache = null;
+        setStatus('🔍 正在展开目录…', 'running');
 
-    const startTime = Date.now();
-    let totalClicked = 0;
-    const MAX_LOOPS = 50;
+        try {
+            for (let loop = 0; loop < MAX_LOOPS; loop++) {
+                // 找所有"未展开"的 svg 箭头
+                const arrows = [];
+                const seen = new Set();
 
-    // ★ 清除旧标记（方便重复点按钮时重新展开）
-    document.querySelectorAll('[data-qcc-clicked]').forEach(el => el.removeAttribute('data-qcc-clicked'));
+                for (const root of getAllRoots()) {
+                    let items;
+                    try { items = root.querySelectorAll('[class*="sub-menu-title"]'); } catch (e) { continue; }
+                    for (const el of items) {
+                        if (seen.has(el)) continue;
+                        seen.add(el);
+                        if (panel && panel.contains(el)) continue;
 
-    setStatus('🔍 正在展开目录…', 'running');
+                        const svg = el.querySelector('svg.svg-icon');
+                        if (!svg) continue;
 
-    try {
-        for (let loop = 0; loop < MAX_LOOPS; loop++) {
-            // ★ 只扫未标记的 sub-menu-title
-            const items = [];
-            const seen = new Set();
-            for (const root of getAllRoots()) {
-                let list;
-                try { list = root.querySelectorAll('[class*="sub-menu-title"]'); } catch (e) { continue; }
-                for (const el of list) {
-                    if (seen.has(el)) continue;
-                    seen.add(el);
-                    if (panel && panel.contains(el)) continue;
-                    if (el.hasAttribute('data-qcc-clicked')) continue;   // ★ 跳过已点过的
-                    items.push(el);
+                        const style = svg.getAttribute('style') || '';
+                        if (style.includes('rotate(180deg)')) continue;   // 已展开 → 跳过
+
+                        arrows.push(svg);
+                    }
                 }
+
+                if (arrows.length === 0) break;
+
+                setStatus(`展开中… 剩 ${arrows.length} 个，已点 ${totalClicked}`, 'running');
+
+                for (const svg of arrows) {
+                    if (!svg.isConnected) continue;   // DOM 重建，跳过，下轮重扫
+                    try {
+                        realClick(svg);
+                        totalClicked++;
+                    } catch (e) {}
+                    await sleep(40);
+                }
+
+                await sleep(180);
+                __leftNavCache = null;
             }
 
-            if (items.length === 0) break;
-
-            setStatus(`展开中… 本轮 ${items.length} 个，已点 ${totalClicked}`, 'running');
-
-            for (const el of items) {
-                if (!el.isConnected) continue;
-                el.setAttribute('data-qcc-clicked', '1');   // ★ 点之前先标记，防自己再被扫到
-                try {
-                    realClick(el);
-                    totalClicked++;
-                } catch (e) {}
-                await sleep(30);
-            }
-
-            await sleep(180);
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+            console.log('[QCC] 展开完成，共点击', totalClicked, '个，用时', elapsed, '秒');
+            setStatus(`展开完成，共点击 ${totalClicked} 个（${elapsed}秒）`, '');
+        } finally {
+            expanding = false;
             __leftNavCache = null;
         }
-
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
-        console.log('[QCC] 展开完成，共点击', totalClicked, '个，用时', elapsed, '秒');
-        setStatus(`展开完成，共点击 ${totalClicked} 个（${elapsed}秒）`, '');
-    } finally {
-        expanding = false;
-        __leftNavCache = null;
     }
-}    
 
     /* ============================================================
      * 拾取：找左侧目录里不加粗的叶子节点
@@ -812,7 +786,7 @@ async function expandAllCollapsed() {
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v4.2.0</span>
+                    <span class="qcc-badge">v4.3.0</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
