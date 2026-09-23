@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         国开无敌自动刷课+次数和时长（试用卡版）
 // @namespace    https://scriptcat.org/
-// @version      5.0.0
+// @version      5.0.1
 // @description 目录展开与选择一栏｜轮流循环点击｜暂停/继续｜2/4/6/8/10倍速｜静音播放完再继续｜10分钟+超级保活｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器｜运行日志与统计｜自动缩放
 // @author       You
 // @match        *://lms.ouchn.cn/*
@@ -71,12 +71,43 @@
             if (res.ok) {
                 authorized = true; authCode = code;
                 localStorage.setItem(STORAGE_KEYS.AUTH, code);
-                const days = parseInt(res.days, 10);
-                if (!isNaN(days) && days > 0) localStorage.setItem(STORAGE_KEYS.EXPIRE, String(Date.now() + days * 86400000));
-                else localStorage.removeItem(STORAGE_KEYS.EXPIRE);
+                // ★ 调试：打印服务端返回，便于排查字段名
+                console.log('[QCC] 服务器返回：', res);
+                // ★ 兼容多种服务端字段名
+                let days = NaN;
+                let explicitLifetime = false;
+                if (typeof res.days === 'number') days = res.days;
+                else if (typeof res.days === 'string' && res.days !== 'lifetime') days = parseInt(res.days, 10);
+                else if (typeof res.remaining_days === 'number') days = res.remaining_days;
+                else if (typeof res.remaining === 'number') days = res.remaining;
+                else if (typeof res.duration === 'number') days = res.duration;
+                if (res.lifetime === true || res.days === -1 || res.days === 'lifetime') explicitLifetime = true;
+
+                if (typeof res.expire === 'number' && res.expire > 1000000000000) {
+                    // 情形 A：到期时间戳（毫秒）
+                    localStorage.setItem(STORAGE_KEYS.EXPIRE, String(res.expire));
+                } else if (typeof res.expire === 'string') {
+                    // 情形 B：到期时间字符串
+                    const t = Date.parse(res.expire);
+                    if (!isNaN(t)) localStorage.setItem(STORAGE_KEYS.EXPIRE, String(t));
+                } else if (explicitLifetime) {
+                    // 情形 C：明确终身
+                    localStorage.setItem(STORAGE_KEYS.EXPIRE, 'lifetime');
+                } else if (!isNaN(days) && days > 0) {
+                    // 情形 D：天数字段
+                    localStorage.setItem(STORAGE_KEYS.EXPIRE, String(Date.now() + days * 86400000));
+                } else {
+                    // 情形 E：什么都未提供 → 不写入，显示"已授权"
+                    localStorage.removeItem(STORAGE_KEYS.EXPIRE);
+                }
+
                 startHeartbeat();
                 if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
-                const tail = (!isNaN(days) && days > 0) ? `（剩余 ${days} 天）` : '（终身有效）';
+                let tail = '';
+                if (explicitLifetime) tail = '（终身有效）';
+                else if (!isNaN(days) && days > 0) tail = `（剩余 ${days} 天）`;
+                else if (typeof res.expire !== 'undefined') tail = `（到期：${new Date(res.expire).toLocaleDateString()}）`;
+                else tail = '（已授权）';
                 return { ok: true, msg: '✅ ' + (res.msg || '验证通过') + tail };
             }
             return { ok: false, msg: '❌ ' + (res.msg || (res.code === 'device_mismatch'
@@ -419,13 +450,17 @@
         updateStatsUI();
     }
 
-    /* VIP 授权时间显示 */
+    /* VIP 授权时间显示（修复版：不再误判"终身有效"） */
     function formatAuthTime() {
         if (!authorized) {
             return authCode ? { text: '待验证', cls: 'warn' } : { text: '未授权', cls: '' };
         }
-        const ex = parseInt(localStorage.getItem(STORAGE_KEYS.EXPIRE) || '0', 10);
-        if (!ex) return { text: 'VIP · 终身有效', cls: 'ok' };
+        const raw = localStorage.getItem(STORAGE_KEYS.EXPIRE) || '';
+        // 情形 C：明确终身
+        if (raw === 'lifetime') return { text: 'VIP · 终身有效', cls: 'ok' };
+        const ex = parseInt(raw, 10);
+        // 情形 E：无到期时间 → 中性显示
+        if (!ex || ex <= 0) return { text: 'VIP · 已授权', cls: 'ok' };
         const left = ex - Date.now();
         if (left <= 0) return { text: 'VIP · 已过期', cls: 'err' };
         const days = Math.ceil(left / 86400000);
@@ -1066,7 +1101,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v5.0.0</span>
+                    <span class="qcc-badge">v5.0.1</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
