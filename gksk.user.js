@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         国开无敌自动刷课+次数和时长
 // @namespace    https://scriptcat.org/
-// @version      4.5.1
-// @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动低音量播放完再继续｜拟人化行为伪装｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器
+// @version      4.5.2
+// @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜静音播放完再继续｜切标签保活｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器
 // @author       You
 // @match        *://lms.ouchn.cn/*
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
@@ -381,7 +381,6 @@
 
         try {
             for (let loop = 0; loop < MAX_LOOPS; loop++) {
-                // ★ 每轮开头检查时间上限
                 if (Date.now() > deadline) {
                     console.log('[QCC] 达到 6 秒时间上限，提前结束');
                     break;
@@ -397,7 +396,6 @@
                         if (seen.has(el)) continue;
                         seen.add(el);
                         if (panel && panel.contains(el)) continue;
-                        // ★ 本次流程已点过的直接跳过，绝不重复
                         if (clickedOnce.has(el)) continue;
 
                         const svg = el.querySelector('svg.svg-icon');
@@ -415,19 +413,17 @@
                 setStatus(`展开中… 剩 ${arrows.length} 个，已点 ${totalClicked}`, 'running');
 
                 for (const { svg, parent } of arrows) {
-                    // ★ 每个箭头点击前也检查时间
                     if (Date.now() > deadline) break;
                     if (!svg.isConnected) continue;
                     try {
                         realClick(svg);
                         totalClicked++;
-                        // ★ 点完立即标记，下一轮绝不再点
                         clickedOnce.add(parent);
                     } catch (e) {}
-                    await sleep(25);   // 每箭头间隔 25ms
+                    await sleep(25);
                 }
 
-                await sleep(100);      // 每轮间隔 100ms（等 DOM 更新）
+                await sleep(100);
                 __leftNavCache = null;
             }
 
@@ -594,28 +590,96 @@
             v.addEventListener('loadedmetadata', onL, { once: true });
         });
     }
-    /* ---- 播放视频：★ 音量 0.01 代替静音 ---- */
+
+    /* ---- 播放视频：★ 静音 + 三重保活（防暂停/防静音/切标签恢复） ---- */
     async function playVideoToEnd(video) {
         await waitMetadata(video, 8000);
+
         const forceRate = () => {
             try {
                 if (video.playbackRate !== videoSpeed) video.playbackRate = videoSpeed;
                 if (video.defaultPlaybackRate !== videoSpeed) video.defaultPlaybackRate = videoSpeed;
             } catch (e) {}
         };
+
+        // ★ 强制静音
+        const forceMute = () => {
+            try {
+                if (!video.muted) video.muted = true;
+                if (video.volume !== 0) video.volume = 0;
+            } catch (e) {}
+        };
+
+        // ★ 防暂停：被平台暂停时 200ms 后自动恢复
+        let pauseRecoverCount = 0;
+        const onPause = () => {
+            if (!isRunning) return;
+            if (pauseRecoverCount > 200) return;
+            pauseRecoverCount++;
+            setTimeout(() => {
+                try {
+                    if (video.paused && video.isConnected && isRunning) {
+                        video.play().catch(() => {});
+                    }
+                } catch (e) {}
+            }, 200);
+        };
+
+        // ★ 切标签回前台：立即检查并恢复
+        const onVisibility = () => {
+            if (!document.hidden && isRunning) {
+                forceMute();
+                forceRate();
+                if (video.paused && video.isConnected) {
+                    video.play().catch(() => {});
+                }
+            }
+        };
+
         const onRC = () => { if (video.playbackRate !== videoSpeed) forceRate(); };
+        const onVolumeChange = () => { forceMute(); };
+
         video.addEventListener('ratechange', onRC);
+        video.addEventListener('pause', onPause);
+        video.addEventListener('volumechange', onVolumeChange);
+        document.addEventListener('visibilitychange', onVisibility);
+
         const rateTimer = setInterval(forceRate, 500);
+        const muteTimer = setInterval(forceMute, 1000);
+        // ★ 每 2 秒体检：暂停 → 恢复；音量 → 静音；倍速 → 恢复
+        const keepAliveTimer = setInterval(() => {
+            if (!isRunning) return;
+            try {
+                if (video.paused && !video.ended && video.isConnected) {
+                    video.play().catch(() => {});
+                }
+                forceMute();
+                forceRate();
+            } catch (e) {}
+        }, 2000);
+
+        const cleanup = () => {
+            video.removeEventListener('ratechange', onRC);
+            video.removeEventListener('pause', onPause);
+            video.removeEventListener('volumechange', onVolumeChange);
+            document.removeEventListener('visibilitychange', onVisibility);
+            clearInterval(rateTimer);
+            clearInterval(muteTimer);
+            clearInterval(keepAliveTimer);
+        };
+
         try {
-            video.muted = false;
-            video.volume = 0.01;
+            video.muted = true;
+            video.volume = 0;
             forceRate();
             try { video.currentTime = 0; } catch (e) {}
             await video.play(); forceRate();
             try { video.currentTime = 0; } catch (e) {}
         } catch (e) {
-            video.removeEventListener('ratechange', onRC); clearInterval(rateTimer); return false;
+            cleanup();
+            return false;
         }
+
         await new Promise(resolve => {
             let last = -1, stuck = 0;
             const st = Date.now(), GRACE = 15000;
@@ -627,11 +691,16 @@
                     if (ct > 0 && Math.abs(ct - last) < 0.05) { stuck++; if (stuck > 30) { resolve(); return; } }
                     else stuck = 0;
                 }
-                last = ct; forceRate(); setTimeout(check, 500);
+                last = ct;
+                forceRate();
+                forceMute();
+                setTimeout(check, 500);
             };
             check();
         });
-        video.removeEventListener('ratechange', onRC); clearInterval(rateTimer); return true;
+
+        cleanup();
+        return true;
     }
 
     /* ========== 轮流点击 ========== */
@@ -642,7 +711,6 @@
         selectedEls = selectedEls.filter(el => el.isConnected);
         if (selectedEls.length === 0) { stopClicking(); setStatus('所有元素已从页面移除', ''); renderList(); return; }
 
-        // ★ 拟人化活动
         humanLikeActivity();
 
         const el = selectedEls[clickIndex % selectedEls.length];
@@ -654,7 +722,7 @@
         const video = await waitForNewVideo(oldKeys, VIDEO_WAIT_MS);
         if (!video) return;
         processingVideo = true;
-        setStatus(`🎬 检测到新视频，正在 ${videoSpeed} 倍速低音量播放…`, 'running');
+        setStatus(`🎬 检测到新视频，正在 ${videoSpeed} 倍速静音播放…`, 'running');
         try { await playVideoToEnd(video); if (isRunning) setStatus('✅ 视频播放完成，准备下一个', ''); }
         catch (e) {} finally { processingVideo = false; }
     }
@@ -809,7 +877,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v4.5.1</span>
+                    <span class="qcc-badge">v4.5.2</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
@@ -1087,7 +1155,7 @@
                 if (isRunning) { stopClicking(); setStatus('ESC 已停止点击', ''); }
             }
         });
-        /* ★ 反检测：切回前台延迟 2~5 秒再继续 */
+        /* ★ 切回前台延迟 2~5 秒再继续 */
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden && isRunning) {
                 try { if (bgWorker) bgWorker.postMessage({ cmd: 'stop' }); } catch (e) {}
