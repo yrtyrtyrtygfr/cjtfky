@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         国开无敌自动刷课+次数和时长
 // @namespace    https://scriptcat.org/
-// @version      4.4.1
-// @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动静音播放完再继续｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器
+// @version      4.5.1
+// @description 目录展开与选择一栏｜轮流循环点击｜视频开关｜2/4/6/8/10倍速｜自动低音量播放完再继续｜拟人化行为伪装｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器
 // @author       You
 // @match        *://lms.ouchn.cn/*
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
 // @grant        GM_xmlhttpRequest
-// @connect      8.155.160.178
+// @connect      aitwo.icu
 // @run-at       document-start
 // @license      MPL-2.0
 // ==/UserScript==
@@ -17,10 +17,10 @@
     window.__QCC_INSTALLED__ = true;
 
     /* ========== 自建授权服务器 ========== */
-    const AUTH_STORAGE_KEY = 'qcc_auth_code_v3';    // v2 → v3，与 keyt 时代缓存隔离
+    const AUTH_STORAGE_KEY = 'qcc_auth_code_v3';
     const AUTH_EXPIRE_KEY  = 'qcc_auth_expire_v3';
-    const AUTH_SERVER = 'http://8.155.160.178:3000';   // 你的授权服务器地址
-    const HEARTBEAT_MS = 50000, HEARTBEAT_FAIL_LIMIT = 3;   // 对齐 B站脚本：3 次失败就踢
+    const AUTH_SERVER = 'https://aitwo.icu';
+    const HEARTBEAT_FAIL_LIMIT = 3;
     let authCode = '', authorized = false;
 
     /* 设备号（供后台绑定使用） */
@@ -57,7 +57,6 @@
         });
     }
 
-    /* ---- 请求验证：POST /api/verify {card, mac} -> {ok, code, msg, days} ---- */
     async function requestVerify(card, mac) {
         try {
             const res = await apiPost('/api/verify', { card, mac });
@@ -65,7 +64,6 @@
         } catch (e) { return null; }
     }
 
-    /* ---- 验证并保存授权状态 ---- */
     async function verifyAuthCode(rawCode) {
         const code = (rawCode || '').trim();
         if (!code) return { ok: false, msg: '请输入卡密' };
@@ -81,7 +79,7 @@
                 if (!isNaN(days) && days > 0) {
                     localStorage.setItem(AUTH_EXPIRE_KEY, String(Date.now() + days * 86400000));
                 } else {
-                    localStorage.removeItem(AUTH_EXPIRE_KEY);   // 永久
+                    localStorage.removeItem(AUTH_EXPIRE_KEY);
                 }
                 startHeartbeat();
                 if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
@@ -94,33 +92,40 @@
         } catch (e) { return { ok: false, msg: '❌ 网络请求失败，请检查网络后重试' }; }
     }
 
-    /* ---- 心跳 ---- */
+    /* ---- 心跳：随机 40~70 秒 ---- */
+    function nextHeartbeatDelay() {
+        return 40000 + Math.random() * 30000;
+    }
     function startHeartbeat() {
         stopHeartbeat(); heartbeatFailCount = 0;
-        heartbeatTimer = setInterval(async () => {
+        const loop = async () => {
             if (!authorized || !authCode) return;
             const res = await requestVerify(authCode, KEYT_DEVICE_ID);
-            if (res && res.ok) { heartbeatFailCount = 0; return; }
-            heartbeatFailCount++;
-            if (heartbeatFailCount >= HEARTBEAT_FAIL_LIMIT) {
-                authorized = false; stopHeartbeat();
-                if (typeof stopClicking === 'function') stopClicking();
-                localStorage.removeItem(AUTH_STORAGE_KEY);
-                localStorage.removeItem(AUTH_EXPIRE_KEY);
-                if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
-                if (typeof setStatus === 'function') setStatus('❌ 卡密心跳失效，请重新验证', '');
+            if (res && res.ok) {
+                heartbeatFailCount = 0;
+            } else {
+                heartbeatFailCount++;
+                if (heartbeatFailCount >= HEARTBEAT_FAIL_LIMIT) {
+                    authorized = false; stopHeartbeat();
+                    if (typeof stopClicking === 'function') stopClicking();
+                    localStorage.removeItem(AUTH_STORAGE_KEY);
+                    localStorage.removeItem(AUTH_EXPIRE_KEY);
+                    if (typeof __syncAuthUI === 'function') { try { __syncAuthUI(); } catch (e) {} }
+                    if (typeof setStatus === 'function') setStatus('❌ 卡密心跳失效，请重新验证', '');
+                    return;
+                }
             }
-        }, HEARTBEAT_MS);
+            if (authorized) heartbeatTimer = setTimeout(loop, nextHeartbeatDelay());
+        };
+        heartbeatTimer = setTimeout(loop, nextHeartbeatDelay());
     }
-    function stopHeartbeat() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } heartbeatFailCount = 0; }
+    function stopHeartbeat() { if (heartbeatTimer) { clearTimeout(heartbeatTimer); heartbeatTimer = null; } heartbeatFailCount = 0; }
 
-    /* ---- 本地缓存自动登录：★ 先联网确认，服务器不认就清缓存 ---- */
     async function loadAuthFromStorage() {
         let saved = '';
         try { saved = (localStorage.getItem(AUTH_STORAGE_KEY) || '').trim(); } catch (e) { return; }
         if (!saved) return;
 
-        // 本地过期时间做快速失败
         const ex = parseInt(localStorage.getItem(AUTH_EXPIRE_KEY) || '0', 10);
         if (ex && ex < Date.now()) {
             try {
@@ -130,7 +135,6 @@
             return;
         }
 
-        // ★ 必须联网确认一次，服务器不认就清缓存，绝不凭本地缓存放行
         const res = await requestVerify(saved, KEYT_DEVICE_ID);
         if (!res || !res.ok) {
             try {
@@ -140,7 +144,6 @@
             return;
         }
 
-        // 服务器认了，才授权
         authCode = saved;
         authorized = true;
         startHeartbeat();
@@ -216,10 +219,34 @@
         return false;
     }
 
-    const RANDOM_MIN_SEC = 3, RANDOM_MAX_SEC = 18;
+    /* ========== 点击间隔：对数正态分布（μ=1.7, σ=0.55） ========== */
     function getRandomDelayMs() {
-        const sec = Math.random() * (RANDOM_MAX_SEC - RANDOM_MIN_SEC) + RANDOM_MIN_SEC;
-        return Math.round(sec * 1000);
+        const gauss = () => {
+            let u = 0, v = 0;
+            while (u === 0) u = Math.random();
+            while (v === 0) v = Math.random();
+            return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+        };
+        // 均值约 5.5s，多数落在 3~9s，偶尔 10~12s
+        const sec = Math.exp(1.7 + 0.55 * gauss());
+        return Math.round(Math.max(3, Math.min(12, sec)) * 1000);
+    }
+
+    /* ========== 拟人化活动 ========== */
+    function humanLikeActivity() {
+        try {
+            if (Math.random() < 0.3) {
+                const delta = (Math.random() - 0.5) * 200;
+                window.scrollBy({ top: delta, behavior: 'smooth' });
+            }
+            if (Math.random() < 0.5) {
+                const x = window.innerWidth * (0.3 + Math.random() * 0.4);
+                const y = window.innerHeight * (0.3 + Math.random() * 0.4);
+                document.dispatchEvent(new MouseEvent('mousemove', {
+                    bubbles: true, clientX: x, clientY: y, screenX: x, screenY: y
+                }));
+            }
+        } catch (e) {}
     }
 
     const workerCode = `let timer=null;self.onmessage=function(e){if(e.data&&e.data.cmd==='start'){const ms=e.data.ms||1000;if(timer)clearInterval(timer);timer=setInterval(function(){self.postMessage({tick:Date.now()});},ms);}else if(e.data&&e.data.cmd==='stop'){if(timer){clearInterval(timer);timer=null;}}};`;
@@ -333,9 +360,7 @@
         setStatus(`已退出手动选择，共 ${selectedEls.length} 个元素`, '');
     }
 
-    /* ============================================================
-     * ★ 展开核心：用 svg 的 rotate(180deg) 判断展开状态，天然去重
-     * ============================================================ */
+    /* ========== 展开核心：★ 6 秒硬限制 + 防重复点击 ========== */
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     async function expandAllCollapsed() {
@@ -344,13 +369,24 @@
         __leftNavCache = null;
 
         const startTime = Date.now();
+        const HARD_LIMIT_MS = 5800;   // 5.8 秒硬上限（留 200ms 收尾）
+        const deadline = startTime + HARD_LIMIT_MS;
+
         let totalClicked = 0;
         const MAX_LOOPS = 50;
+        // ★ 记录本次流程已点过的元素，防止反复点击
+        const clickedOnce = new WeakSet();
 
         setStatus('🔍 正在展开目录…', 'running');
 
         try {
             for (let loop = 0; loop < MAX_LOOPS; loop++) {
+                // ★ 每轮开头检查时间上限
+                if (Date.now() > deadline) {
+                    console.log('[QCC] 达到 6 秒时间上限，提前结束');
+                    break;
+                }
+
                 const arrows = [];
                 const seen = new Set();
 
@@ -361,14 +397,16 @@
                         if (seen.has(el)) continue;
                         seen.add(el);
                         if (panel && panel.contains(el)) continue;
+                        // ★ 本次流程已点过的直接跳过，绝不重复
+                        if (clickedOnce.has(el)) continue;
 
                         const svg = el.querySelector('svg.svg-icon');
                         if (!svg) continue;
 
                         const style = svg.getAttribute('style') || '';
-                        if (style.includes('rotate(180deg)')) continue;   // 已展开
+                        if (style.includes('rotate(180deg)')) continue;
 
-                        arrows.push(svg);
+                        arrows.push({ svg: svg, parent: el });
                     }
                 }
 
@@ -376,28 +414,39 @@
 
                 setStatus(`展开中… 剩 ${arrows.length} 个，已点 ${totalClicked}`, 'running');
 
-                for (const svg of arrows) {
+                for (const { svg, parent } of arrows) {
+                    // ★ 每个箭头点击前也检查时间
+                    if (Date.now() > deadline) break;
                     if (!svg.isConnected) continue;
-                    try { realClick(svg); totalClicked++; } catch (e) {}
-                    await sleep(40);
+                    try {
+                        realClick(svg);
+                        totalClicked++;
+                        // ★ 点完立即标记，下一轮绝不再点
+                        clickedOnce.add(parent);
+                    } catch (e) {}
+                    await sleep(25);   // 每箭头间隔 25ms
                 }
 
-                await sleep(180);
+                await sleep(100);      // 每轮间隔 100ms（等 DOM 更新）
                 __leftNavCache = null;
             }
 
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
             console.log('[QCC] 展开完成，共点击', totalClicked, '个，用时', elapsed, '秒');
-            setStatus(`展开完成，共点击 ${totalClicked} 个（${elapsed}秒）`, '');
+            const hitLimit = Date.now() - startTime >= HARD_LIMIT_MS - 50;
+            setStatus(
+                hitLimit
+                    ? `展开完成 ${totalClicked} 个（${elapsed}秒，达时间上限）`
+                    : `展开完成，共点击 ${totalClicked} 个（${elapsed}秒）`,
+                ''
+            );
         } finally {
             expanding = false;
             __leftNavCache = null;
         }
     }
 
-    /* ============================================================
-     * 拾取：找左侧目录里不加粗的叶子节点
-     * ============================================================ */
+    /* ========== 拾取 ========== */
     function findLeftNav() {
         if (__leftNavCache && __leftNavCache.isConnected) return __leftNavCache;
         for (const root of getAllRoots()) {
@@ -476,9 +525,6 @@
         }
     }
 
-    /* ============================================================
-     * ★ 自动选择（授权后）：只拾取
-     * ============================================================ */
     async function autoPickLeftNav() {
         if (picking) return;
         picking = true;
@@ -548,6 +594,7 @@
             v.addEventListener('loadedmetadata', onL, { once: true });
         });
     }
+    /* ---- 播放视频：★ 音量 0.01 代替静音 ---- */
     async function playVideoToEnd(video) {
         await waitMetadata(video, 8000);
         const forceRate = () => {
@@ -560,7 +607,9 @@
         video.addEventListener('ratechange', onRC);
         const rateTimer = setInterval(forceRate, 500);
         try {
-            video.muted = true; forceRate();
+            video.muted = false;
+            video.volume = 0.01;
+            forceRate();
             try { video.currentTime = 0; } catch (e) {}
             await video.play(); forceRate();
             try { video.currentTime = 0; } catch (e) {}
@@ -592,6 +641,10 @@
         if (selectedEls.length === 0) { stopClicking(); setStatus('没有可点击的元素', ''); return; }
         selectedEls = selectedEls.filter(el => el.isConnected);
         if (selectedEls.length === 0) { stopClicking(); setStatus('所有元素已从页面移除', ''); renderList(); return; }
+
+        // ★ 拟人化活动
+        humanLikeActivity();
+
         const el = selectedEls[clickIndex % selectedEls.length];
         const oldKeys = snapshotVideoKeys();
         try { realClick(pickClickTarget(el) || el); highlightClick(el); } catch (err) {}
@@ -601,7 +654,7 @@
         const video = await waitForNewVideo(oldKeys, VIDEO_WAIT_MS);
         if (!video) return;
         processingVideo = true;
-        setStatus(`🎬 检测到新视频，正在 ${videoSpeed} 倍速静音播放…`, 'running');
+        setStatus(`🎬 检测到新视频，正在 ${videoSpeed} 倍速低音量播放…`, 'running');
         try { await playVideoToEnd(video); if (isRunning) setStatus('✅ 视频播放完成，准备下一个', ''); }
         catch (e) {} finally { processingVideo = false; }
     }
@@ -637,7 +690,7 @@
         isRunning = true; processingVideo = false; clickIndex = 0; clickedTotal = 0;
         const b1 = document.getElementById('qcc-start'), b2 = document.getElementById('qcc-stop');
         if (b1) b1.disabled = true; if (b2) b2.disabled = false;
-        setStatus('开始执行…（无限循环，随机间隔 3~18 秒）', 'running');
+        setStatus('开始执行…（拟人化间隔，多数 3~9 秒）', 'running');
         startKeepAlive(); clickLoop();
     }
     function stopClicking() {
@@ -756,7 +809,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v4.4.1</span>
+                    <span class="qcc-badge">v4.5.1</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
@@ -767,7 +820,7 @@
                 <div class="qcc-section">
                     <div class="qcc-section-title">⚙️ 参数设置</div>
                     <div class="qcc-field qcc-field-block">
-                        <div class="qcc-field-head"><label>点击间隔</label><span class="qcc-interval-value">3~18s 随机</span></div>
+                        <div class="qcc-field-head"><label>点击间隔</label><span class="qcc-interval-value">拟人化 3~12s</span></div>
                     </div>
                     <div class="qcc-field qcc-field-row">
                         <label id="qcc-auto-video-label">自动播放视频 🔒</label>
@@ -986,6 +1039,7 @@
                 flashDonateBtn();
                 return;
             }
+            if (expanding) { setStatus('⏳ 正在展开中，请稍候…', 'running'); return; }
             expandAllCollapsed();
         });
 
@@ -1033,12 +1087,15 @@
                 if (isRunning) { stopClicking(); setStatus('ESC 已停止点击', ''); }
             }
         });
+        /* ★ 反检测：切回前台延迟 2~5 秒再继续 */
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden && isRunning) {
                 try { if (bgWorker) bgWorker.postMessage({ cmd: 'stop' }); } catch (e) {}
                 if (bgWorker && workerTickHandler) { try { bgWorker.removeEventListener('message', workerTickHandler); } catch (e) {} workerTickHandler = null; }
                 if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-                setStatus('已回到前台，继续执行…', 'running'); clickLoop();
+                const resumeDelay = 2000 + Math.random() * 3000;
+                setStatus('已回到前台，' + Math.round(resumeDelay / 1000) + ' 秒后继续…', 'running');
+                setTimeout(() => { if (isRunning) clickLoop(); }, resumeDelay);
             }
         });
 
