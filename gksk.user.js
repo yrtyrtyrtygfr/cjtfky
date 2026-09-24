@@ -5,6 +5,7 @@
 // @description 浅色/深色主题切换｜点击绿框保持｜未授权提示｜停止保留选择/退出选择才清空｜授权后全自动展开×2→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活
 // @author       You
 // @match        *://lms.ouchn.cn/*
+// @noframes
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
 // @grant        GM_xmlhttpRequest
 // @connect      aitwo.icu
