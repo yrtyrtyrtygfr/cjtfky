@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         新国开/国开/国家开放大学自动刷课+次数和时长（试用卡版）
+// @name         新国开/国开/国家开放大学自动刷课+次数和时长
 // @namespace    https://scriptcat.org/
-// @version      5.0.3
+// @version      5.0.4
 // @description 目录展开与选择一栏｜轮流循环点击｜暂停/继续｜2/4/6/8/10倍速｜静音播放完再继续｜10分钟+超级保活｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器｜运行日志与统计｜自动缩放
 // @author       You
 // @match        *://lms.ouchn.cn/*
@@ -273,14 +273,22 @@
         });
     }
 
-    /* ========== 保活 ========== */
+    /* ============================================================
+     * 保活模块（含超级保活 v2）
+     * ============================================================ */
     let keepAliveAudio = null, wakeLock = null, visibilityPatched = false;
+    // ★ 超级保活变量
+    let superKeepAliveTimer = null, videoMarkerTimer = null;
+    let pauseHardPatched = false;
+    let totalRecoverCount = 0;
+
     function patchVisibility() {
         if (visibilityPatched) return;
         visibilityPatched = true;
         try {
             Object.defineProperty(document, 'hidden', { configurable: true, get: function() { return false; } });
             Object.defineProperty(document, 'visibilityState', { configurable: true, get: function() { return 'visible'; } });
+            console.log('[QCC] ✓ visibility 伪装已启用');
         } catch (e) {}
     }
     function patchPauseMethod() {
@@ -294,13 +302,93 @@
                 if (document.hidden) return;
                 return origPause.call(this);
             };
+            console.log('[QCC] ✓ pause 拦截已启用');
         } catch (e) {}
     }
+    // ★ 硬拦截：带 qccForcePlay 标记的 video 强制拒停
+    function patchPauseHard() {
+        if (pauseHardPatched) return;
+        pauseHardPatched = true;
+        try {
+            const cur = HTMLMediaElement.prototype.pause;
+            HTMLMediaElement.prototype.pause = function() {
+                if (this.dataset && this.dataset.qccForcePlay === '1' && !this.ended) {
+                    console.log('[QCC] 硬拦截 pause');
+                    return;
+                }
+                return cur.call(this);
+            };
+            console.log('[QCC] ✓ 硬拦截 pause 已启用');
+        } catch (e) {}
+    }
+    function markAllVideos() {
+        try {
+            document.querySelectorAll('video').forEach(v => {
+                v.dataset.qccForcePlay = '1';
+                if (!v.dataset.qccLastCT) v.dataset.qccLastCT = '0';
+                if (!v.dataset.qccStuckCount) v.dataset.qccStuckCount = '0';
+            });
+        } catch (e) {}
+    }
+    // ★ 超级保活 v2：每秒检测视频 + 卡顿 30 秒放弃
+    function startSuperKeepAlive() {
+        if (superKeepAliveTimer) return;
+        patchPauseHard();
+        markAllVideos();
+        totalRecoverCount = 0;
+        superKeepAliveTimer = setInterval(() => {
+            if (!isRunning) return;
+            try {
+                document.querySelectorAll('video').forEach(v => {
+                    if (v.dataset.qccGiveUp === '1') return;
+                    const ct = v.currentTime || 0;
+                    if (v.dataset.qccLastCT === String(ct)) {
+                        v.dataset.qccStuckCount = String(parseInt(v.dataset.qccStuckCount || '0', 10) + 1);
+                    } else {
+                        v.dataset.qccStuckCount = '0';
+                        v.dataset.qccLastCT = String(ct);
+                    }
+                    const stuck = parseInt(v.dataset.qccStuckCount || '0', 10);
+
+                    if (v.paused && !v.ended && ct > 0) {
+                        totalRecoverCount++;
+                        if (totalRecoverCount % 3 === 0) {
+                            console.log('[QCC] 已恢复 ' + totalRecoverCount + ' 次（每3次打印）');
+                        }
+                        v.play().catch(() => {});
+                    }
+
+                    if (stuck >= 30 && v.dataset.qccGiveUp !== '1') {
+                        v.dataset.qccGiveUp = '1';
+                        console.warn('[QCC] ⚠️ 视频连续卡顿 30 秒，已放弃恢复');
+                        try { addLog('⚠️ 视频卡顿，建议刷新页面 / 换网络 / 换课程', 'err'); } catch (e) {}
+                    }
+                });
+            } catch (e) {}
+        }, 1000);
+        videoMarkerTimer = setInterval(markAllVideos, 3000);
+        console.log('[QCC] ✓ 超级保活 v2 已启用');
+    }
+    function stopSuperKeepAlive() {
+        if (superKeepAliveTimer) { clearInterval(superKeepAliveTimer); superKeepAliveTimer = null; }
+        if (videoMarkerTimer) { clearInterval(videoMarkerTimer); videoMarkerTimer = null; }
+        totalRecoverCount = 0;
+        try {
+            document.querySelectorAll('video').forEach(v => {
+                delete v.dataset.qccForcePlay;
+                delete v.dataset.qccLastCT;
+                delete v.dataset.qccStuckCount;
+                delete v.dataset.qccGiveUp;
+            });
+        } catch (e) {}
+    }
+
     function startMediaSession() {
         try {
             if ('mediaSession' in navigator) {
                 navigator.mediaSession.playbackState = 'playing';
                 try { navigator.mediaSession.metadata = new MediaMetadata({ title: '学习视频', artist: '国开学习' }); } catch (e) {}
+                console.log('[QCC] ✓ MediaSession 已启用');
             }
         } catch (e) {}
     }
@@ -308,6 +396,7 @@
         try {
             if ('wakeLock' in navigator && !wakeLock) {
                 wakeLock = await navigator.wakeLock.request('screen');
+                console.log('[QCC] ✓ WakeLock 已获取');
                 wakeLock.addEventListener('release', () => { wakeLock = null; if (isRunning) setTimeout(requestWakeLock, 1000); });
             }
         } catch (e) {}
@@ -323,14 +412,26 @@
             osc.connect(gain).connect(ctx.destination); osc.start();
             const resumeTimer = setInterval(() => { try { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); } catch (e) {} }, 30000);
             keepAliveAudio = { ctx, osc, gain, resumeTimer };
+            console.log('[QCC] ✓ 440Hz 保活音频已启用');
         } catch (e) {}
     }
     function stopKeepAlive() {
         try { if (keepAliveAudio) { if (keepAliveAudio.resumeTimer) clearInterval(keepAliveAudio.resumeTimer); keepAliveAudio.osc.stop(); keepAliveAudio.ctx.close(); } } catch (e) {}
         keepAliveAudio = null;
     }
-    function enableAllKeepAlive() { patchVisibility(); patchPauseMethod(); startMediaSession(); startKeepAlive(); requestWakeLock(); }
-    function disableAllKeepAlive() { stopKeepAlive(); releaseWakeLock(); }
+    function enableAllKeepAlive() {
+        patchVisibility();
+        patchPauseMethod();
+        startMediaSession();
+        startKeepAlive();
+        requestWakeLock();
+        startSuperKeepAlive();   // ★ 启动超级保活
+    }
+    function disableAllKeepAlive() {
+        stopKeepAlive();
+        releaseWakeLock();
+        stopSuperKeepAlive();    // ★ 停止超级保活
+    }
 
     /* ========== 全局状态 ========== */
     let panel, statusEl, statusTextEl, listBox, listCountEl;
@@ -1101,7 +1202,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v5.0.1</span>
+                    <span class="qcc-badge">v5.0.4</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
