@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         国开无敌自动刷课+次数和时长（试用卡版）
+// @name         新国开/国开/国家开放大学自动刷课+次数和时长（试用卡版）
 // @namespace    https://scriptcat.org/
-// @version      5.0.1
+// @version      5.0.3
 // @description 目录展开与选择一栏｜轮流循环点击｜暂停/继续｜2/4/6/8/10倍速｜静音播放完再继续｜10分钟+超级保活｜苹果风格UI｜ESC停止｜后台也继续运行｜自建授权服务器｜运行日志与统计｜自动缩放
 // @author       You
 // @match        *://lms.ouchn.cn/*
