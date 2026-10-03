@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         新国开/国开/国家开放大学自动刷课+次数和时长（试用卡版）
 // @namespace    https://scriptcat.org/
-// @version      5.2.6
-// @description 浅色/深色主题切换｜点击绿框保持｜未授权提示｜停止保留选择/退出选择才清空｜授权后全自动展开×2→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活
+// @version      5.4.0
+// @description 新国开｜国开｜国家开放大学｜浅色/深色主题｜点击绿框保持｜授权后全自动展开→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活
 // @author       You
 // @match        *://lms.ouchn.cn/*
 // @noframes
@@ -21,9 +21,9 @@
     const SERVER = 'https://aitwo.icu';
     const HB_MS = 50000, HB_FAIL = 3;
     const RAND_MIN = 2, RAND_MAX = 12;
-    const V_WAIT = 15000, V_POLL = 300;
+    const V_WAIT = 20000, V_POLL = 800;
     const EXPAND_LIMIT = 5800, EXPAND_LOOPS = 50, EXPAND_GAP = 25, EXPAND_LOOP_GAP = 100, EXPAND_ROUND_GAP = 2000;
-    const ROOTS_MS = 300, LOG_MAX = 80;
+    const LOG_MAX = 80;
     const SPEEDS = [2, 4, 6, 8, 10];
     const V_GRACE = 15000, V_STUCK = 30;
     const TRIAL = 'CS-2VJY5A5T7Q';
@@ -37,33 +37,107 @@
     let isDarkTheme = false;
 
     const DEVICE_ID = (() => {
-    try {
-        // 尝试恢复
-        let id = localStorage.getItem(K.DEV);
-        if (id) return id;
-        
-        // 生成：指纹 + 随机
-        const parts = [
-            navigator.hardwareConcurrency || 0,
-            screen.width + 'x' + screen.height,
-            screen.colorDepth,
-            new Date().getTimezoneOffset(),
-            navigator.platform || '',
-            navigator.language || ''
-        ].join('|');
-        let h = 0;
-        for (let i = 0; i < parts.length; i++) h = ((h << 5) - h + parts.charCodeAt(i)) | 0;
-        const fp = (h >>> 0).toString(16).toUpperCase().padStart(8, '0');
-        const rand = Math.random().toString(16).slice(2, 8).toUpperCase();
-        id = fp + '-' + rand + 'FP';
-        
-        localStorage.setItem(K.DEV, id);
-        try { document.cookie = `${K.DEV}=${id}; max-age=31536000; path=/`; } catch (e) {}
-        return id;
-    } catch (e) {
-        return 'FB' + Date.now().toString(16).slice(-6).toUpperCase() + 'FP';
+        try {
+            let id = localStorage.getItem(K.DEV);
+            if (id) return id;
+            try {
+                const m = document.cookie.match(new RegExp('(?:^|;\\s*)' + K.DEV + '=([^;]+)'));
+                if (m && m[1]) return m[1];
+            } catch (e) {}
+            const parts = [navigator.hardwareConcurrency || 0, screen.width + 'x' + screen.height, screen.colorDepth, new Date().getTimezoneOffset(), navigator.platform || '', navigator.language || ''].join('|');
+            let h = 0;
+            for (let i = 0; i < parts.length; i++) h = ((h << 5) - h + parts.charCodeAt(i)) | 0;
+            const fp = (h >>> 0).toString(16).toUpperCase().padStart(8, '0');
+            const rand = Math.random().toString(16).slice(2, 8).toUpperCase();
+            id = fp + '-' + rand + 'FP';
+            try { localStorage.setItem(K.DEV, id); } catch (e) {}
+            try { document.cookie = `${K.DEV}=${id}; max-age=31536000; path=/`; } catch (e) {}
+            return id;
+        } catch (e) { return 'FB' + Date.now().toString(16).slice(-6).toUpperCase() + 'FP'; }
+    })();
+
+    /* ===== 跳转续跑 ===== */
+    const K_RESUME = 'qcc_resume_v1';
+    function setResume() { try { sessionStorage.setItem(K_RESUME, '1'); } catch (e) {} }
+    function getResume() { try { return sessionStorage.getItem(K_RESUME) === '1'; } catch (e) { return false; } }
+    function clearResume() { try { sessionStorage.removeItem(K_RESUME); } catch (e) {} }
+
+    /* ===== 页面识别 ===== */
+    function findExpandAllButton() {
+        let all; try { all = document.querySelectorAll('button, a'); } catch (e) { return null; }
+        let best = null, bestLen = Infinity;
+        for (const el of all) {
+            if (panel && panel.contains(el)) continue;
+            const t = (el.textContent || '').trim().replace(/\s+/g, '');
+            if (!t.includes('全部展开')) continue;
+            if (t.length > 20) continue;
+            if (t.length < bestLen) { bestLen = t.length; best = el; }
+        }
+        return best;
     }
-})();
+    function findCollapseAllButton() {
+        const all = document.querySelectorAll('button, a, span, div');
+        let best = null, bestLen = Infinity;
+        for (const el of all) {
+            if (panel && panel.contains(el)) continue;
+            const t = (el.textContent || '').trim().replace(/\s+/g, '');
+            if (!t.includes('全部收起')) continue;
+            if (t.length > 20) continue;
+            if (t.length < bestLen) { bestLen = t.length; best = el; }
+        }
+        return best;
+    }
+    function findReturnCourseButton() {
+        const all = document.querySelectorAll('button, a, span, div');
+        let best = null, bestLen = Infinity;
+        for (const el of all) {
+            if (panel && panel.contains(el)) continue;
+            const t = (el.textContent || '').trim().replace(/\s+/g, '');
+            if (!t.includes('返回课程')) continue;
+            if (t.length > 20) continue;
+            if (t.length < bestLen) { bestLen = t.length; best = el; }
+        }
+        return best;
+    }
+    function isLearningActivityPage() {
+        return /\/learning-activity\//.test(location.href) || !!findReturnCourseButton();
+    }
+    function isChapterListPage() {
+        return !!findExpandAllButton() || !!findCollapseAllButton();
+    }
+    function clickExpandAll() {
+        const btn = findExpandAllButton();
+        if (!btn) return false;
+        try { realClick(btn); } catch (e) { try { btn.click(); } catch (e2) {} }
+        return true;
+    }
+    async function waitForCollapseAll(maxMs = 5000) {
+        const st = Date.now();
+        while (Date.now() - st < maxMs) {
+            if (findCollapseAllButton()) return true;
+            await sleep(200);
+        }
+        return false;
+    }
+    function findFirstEntry() {
+    // ★ 国开真实结构：a.title / .activity-title a / .activity-header a
+    const cands = document.querySelectorAll('a.title, .activity-title a, .activity-header a');
+    const list = [];
+    for (const a of cands) {
+        if (panel && panel.contains(a)) continue;
+        let r;
+        try { r = a.getBoundingClientRect(); } catch (e) { continue; }
+        if (r.width < 30 || r.height < 12) continue;
+        if (r.left < 180) continue;    // 排除左侧菜单
+        if (r.top < 100) continue;     // 排除顶部
+        const t = (a.textContent || '').trim().replace(/\s+/g, ' ');
+        if (!t || t.length > 100) continue;
+        if (/全部展开|全部收起|形考任务|终考任务|讨论/.test(t)) continue;
+        list.push({ el: a, top: r.top, left: r.left });
+    }
+    list.sort((a, b) => a.top - b.top || a.left - b.left);
+    return list.length ? list[0].el : null;
+}
 
     /* ===== 主题 ===== */
     function loadTheme() {
@@ -98,16 +172,14 @@
         });
     });
     const verify = async code => { try { const r = await api('/api/verify', { card: code, mac: DEVICE_ID }); return r && typeof r === 'object' ? r : null; } catch (e) { return null; } };
-
     async function doVerify(raw) {
         const code = (raw || '').trim();
         if (!code) return { ok: false, msg: '请输入卡密' };
         const res = await verify(code);
-        if (!res) return { ok: false, msg: '❌ 网络请求失败，请检查网络后重试' };
+        if (!res) return { ok: false, msg: '❌ 网络请求失败' };
         if (res.ok) {
             authorized = true; authCode = code;
             localStorage.setItem(K.AUTH, code);
-            console.log('[QCC] 服务器返回：', res);
             let days = NaN, lifetime = false;
             if (typeof res.days === 'number') days = res.days;
             else if (typeof res.days === 'string' && res.days !== 'lifetime') days = parseInt(res.days, 10);
@@ -122,10 +194,10 @@
             else localStorage.removeItem(K.EXP);
             startHB();
             if (syncAuthUI) try { syncAuthUI(); } catch (e) {}
-            const tail = lifetime ? '（终身有效）' : (!isNaN(days) && days > 0 ? `（剩余 ${days} 天）` : (typeof res.expire !== 'undefined' ? `（到期：${new Date(res.expire).toLocaleDateString()}）` : '（已授权）'));
+            const tail = lifetime ? '（终身有效）' : (!isNaN(days) && days > 0 ? `（剩余 ${days} 天）` : '（已授权）');
             return { ok: true, msg: '✅ ' + (res.msg || '验证通过') + tail };
         }
-        return { ok: false, msg: '❌ ' + (res.msg || (res.code === 'device_mismatch' ? '设备不匹配（请在后台解绑该卡密或改用新卡密）' : '验证失败')) };
+        return { ok: false, msg: '❌ ' + (res.msg || '验证失败') };
     }
     function startHB() {
         stopHB(); hbFail = 0;
@@ -137,13 +209,12 @@
                 authorized = false; stopHB();
                 if (typeof stopClicking === 'function') stopClicking();
                 if (syncAuthUI) try { syncAuthUI(); } catch (e) {}
-                setStatus('⚠️ 网络异常，卡密已保留，请重新验证', '');
-                addLog('⚠️ 卡密心跳失败（已保留卡密）', 'err');
+                setStatus('⚠️ 网络异常，卡密已保留', '');
+                addLog('⚠️ 心跳失败（已保留卡密）', 'err');
             }
         }, HB_MS);
     }
     function stopHB() { if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; } hbFail = 0; }
-
     async function loadAuth() {
         let saved = '';
         try { saved = (localStorage.getItem(K.AUTH) || '').trim(); } catch (e) { return; }
@@ -166,36 +237,11 @@
     }
     const saveCfg = () => { try { localStorage.setItem(K.CFG, JSON.stringify({ autoPlayVideo, videoSpeed, maxClicks })); } catch (e) {} };
 
-    /* ===== Shadow DOM ===== */
-    const shadowMap = new Map(), nativeAttach = Element.prototype.attachShadow;
-    Element.prototype.attachShadow = function (init) {
-        const r = nativeAttach.call(this, init);
-        try { shadowMap.set(this, r); } catch (e) {}
-        return r;
-    };
-    const getShadow = el => (el && el.nodeType === 1) ? (el.shadowRoot || shadowMap.get(el) || null) : null;
-    let rootsCache = null, rootsObs = null, rootsDirty = true, rootsLast = 0;
-    function ensureRootsObs() {
-        if (rootsObs || !document.documentElement) return;
-        try { rootsObs = new MutationObserver(() => { rootsDirty = true; }); rootsObs.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) { rootsObs = null; }
-    }
-    function getAllRoots() {
-        if (!rootsDirty && rootsCache) return rootsCache;
-        const now = Date.now();
-        if (rootsCache && now - rootsLast < ROOTS_MS) return rootsCache;
-        ensureRootsObs();
-        const roots = [document], seen = new Set(roots);
-        for (let i = 0; i < roots.length; i++) {
-            let all;
-            try { all = roots[i].querySelectorAll('*'); } catch (e) { continue; }
-            for (const el of all) { const sr = getShadow(el); if (sr && !seen.has(sr)) { seen.add(sr); roots.push(sr); } }
-        }
-        rootsCache = roots; rootsDirty = false; rootsLast = now; return roots;
-    }
+    /* ===== Shadow DOM（简化） ===== */
+    function getAllRoots() { return [document]; }
 
     /* ===== 通用工具 ===== */
     const reportErr = (tag, err, log) => { console.warn(`[QCC] ${tag}:`, err); if (log) addLog(`⚠️ ${tag}：${(err && err.message) || err}`, 'err'); };
-
     function realClick(el) {
         if (!el) return false;
         try {
@@ -234,10 +280,7 @@
         return worker;
     };
     let delayResolve = null, delayTimer = null;
-    function interruptDelay() {
-        if (delayTimer) { clearTimeout(delayTimer); delayTimer = null; }
-        if (delayResolve) { const r = delayResolve; delayResolve = null; r(); }
-    }
+    function interruptDelay() { if (delayTimer) { clearTimeout(delayTimer); delayTimer = null; } if (delayResolve) { const r = delayResolve; delayResolve = null; r(); } }
     function waitDelay(ms) {
         return new Promise(res => {
             delayResolve = () => { delayResolve = null; res(); };
@@ -259,10 +302,10 @@
         });
     }
 
-    /* ===== 保活（7 层）===== */
+    /* ===== 保活 ===== */
     let keepAudio = null, wakeLock = null, visPatched = false, pauseHardPatched = false;
     let superTimer = null, markerTimer = null, recoverCount = 0;
-
+    const vMeta = new WeakMap();
     function patchVisibility() {
         if (visPatched) return; visPatched = true;
         try {
@@ -275,7 +318,6 @@
         window.__QCC_PAUSE__ = true;
         try {
             const orig = HTMLMediaElement.prototype.pause;
-            window.__QCC_ORIG_PAUSE__ = orig;
             HTMLMediaElement.prototype.pause = function () {
                 if (!isRunning || this.ended) return orig.call(this);
                 if (document.hidden) return;
@@ -288,13 +330,14 @@
         try {
             const cur = HTMLMediaElement.prototype.pause;
             HTMLMediaElement.prototype.pause = function () {
-                if (this.dataset && this.dataset.qccForce === '1' && !this.ended) return;
+                const m = vMeta.get(this);
+                if (m && !m.giveUp && !this.ended) return;
                 return cur.call(this);
             };
         } catch (e) {}
     }
     function markVideos() {
-        try { document.querySelectorAll('video').forEach(v => { v.dataset.qccForce = '1'; if (!v.dataset.qccLast) v.dataset.qccLast = '0'; if (!v.dataset.qccStuck) v.dataset.qccStuck = '0'; }); } catch (e) {}
+        try { document.querySelectorAll('video').forEach(v => { if (!vMeta.has(v)) vMeta.set(v, { last: 0, stuck: 0, giveUp: false }); }); } catch (e) {}
     }
     function startSuperKA() {
         if (superTimer) return;
@@ -303,95 +346,54 @@
             if (!isRunning) return;
             try {
                 document.querySelectorAll('video').forEach(v => {
-                    if (v.dataset.qccGiveUp === '1') return;
+                    let m = vMeta.get(v);
+                    if (!m) { m = { last: 0, stuck: 0, giveUp: false }; vMeta.set(v, m); }
+                    if (m.giveUp) return;
                     const ct = v.currentTime || 0;
-                    v.dataset.qccStuck = String(v.dataset.qccLast === String(ct) ? parseInt(v.dataset.qccStuck || '0', 10) + 1 : 0);
-                    v.dataset.qccLast = String(ct);
-                    if (v.paused && !v.ended && ct > 0) {
-                        recoverCount++;
-                        if (recoverCount % 3 === 0) console.log('[QCC] 已恢复 ' + recoverCount + ' 次');
-                        v.play().catch(() => {});
-                    }
-                    if (parseInt(v.dataset.qccStuck, 10) >= 30 && v.dataset.qccGiveUp !== '1') {
-                        v.dataset.qccGiveUp = '1';
-                        addLog('⚠️ 视频卡顿，建议刷新页面 / 换网络 / 换课程', 'err');
-                    }
+                    m.stuck = (m.last === ct) ? m.stuck + 1 : 0;
+                    m.last = ct;
+                    if (v.paused && !v.ended && ct > 0) { recoverCount++; v.play().catch(() => {}); }
+                    if (m.stuck >= 30 && !m.giveUp) { m.giveUp = true; addLog('⚠️ 视频卡顿', 'err'); }
                 });
             } catch (e) {}
         }, 1000);
-        markerTimer = setInterval(markVideos, 3000);
+        markerTimer = setInterval(markVideos, 5000);
     }
-    function stopSuperKA() {
-        if (superTimer) { clearInterval(superTimer); superTimer = null; }
-        if (markerTimer) { clearInterval(markerTimer); markerTimer = null; }
-        recoverCount = 0;
-        try { document.querySelectorAll('video').forEach(v => { delete v.dataset.qccForce; delete v.dataset.qccLast; delete v.dataset.qccStuck; delete v.dataset.qccGiveUp; }); } catch (e) {}
-    }
+    function stopSuperKA() { if (superTimer) { clearInterval(superTimer); superTimer = null; } if (markerTimer) { clearInterval(markerTimer); markerTimer = null; } recoverCount = 0; }
     function startMediaSession() { try { if ('mediaSession' in navigator) { navigator.mediaSession.playbackState = 'playing'; try { navigator.mediaSession.metadata = new MediaMetadata({ title: '学习视频', artist: '国开' }); } catch (e) {} } } catch (e) {} }
-    async function reqWakeLock() {
-        try {
-            if ('wakeLock' in navigator && !wakeLock) {
-                wakeLock = await navigator.wakeLock.request('screen');
-                wakeLock.addEventListener('release', () => { wakeLock = null; if (isRunning) setTimeout(reqWakeLock, 1000); });
-            }
-        } catch (e) {}
-    }
-    function startKA() {
-        if (keepAudio) return;
-        try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-            const osc = ctx.createOscillator(), g = ctx.createGain();
-            osc.type = 'sine'; osc.frequency.value = 440; g.gain.value = 0.00005;
-            osc.connect(g).connect(ctx.destination); osc.start();
-            const rt = setInterval(() => { try { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); } catch (e) {} }, 30000);
-            keepAudio = { ctx, osc, rt };
-        } catch (e) {}
-    }
+    async function reqWakeLock() { try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; if (isRunning) setTimeout(reqWakeLock, 1000); }); } } catch (e) {} }
+    function startKA() { if (keepAudio) return; try { const ctx = new (window.AudioContext || window.webkitAudioContext)(); if (ctx.state === 'suspended') ctx.resume().catch(() => {}); const osc = ctx.createOscillator(), g = ctx.createGain(); osc.type = 'sine'; osc.frequency.value = 440; g.gain.value = 0.00005; osc.connect(g).connect(ctx.destination); osc.start(); const rt = setInterval(() => { try { if (ctx.state === 'suspended') ctx.resume().catch(() => {}); } catch (e) {} }, 30000); keepAudio = { ctx, osc, rt }; } catch (e) {} }
     function stopKA() { try { if (keepAudio) { clearInterval(keepAudio.rt); keepAudio.osc.stop(); keepAudio.ctx.close(); } } catch (e) {} keepAudio = null; }
     function enableKA() { patchVisibility(); patchPause(); startMediaSession(); startKA(); reqWakeLock(); startSuperKA(); }
     function disableKA() { stopKA(); try { if (wakeLock) { wakeLock.release(); wakeLock = null; } } catch (e) {} stopSuperKA(); }
 
     /* ===== 全局状态 ===== */
     let panel, statusEl, statusTextEl, listCountEl;
-    let leftNavCache = null, selectedEls = [], isRunning = false, isPaused = false;
+    let selectedEls = [], isRunning = false, isPaused = false;
     let clickTimer = null, clickIndex = 0, clickedTotal = 0, maxClicks = 0;
     let expanding = false, picking = false, processingVideo = false, preparing = false;
     let currentClickingEl = null, clickHighlightTimer = null;
     const clickCountMap = new WeakMap();
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     /* ===== 缩放 ===== */
-    function calcScale() {
-        const w = innerWidth, h = innerHeight;
-        let s = w >= 3600 ? 1.40 : w >= 2800 ? 1.25 : w >= 2200 ? 1.10 : w >= 1920 ? 1.00 : w >= 1600 ? 0.92 : w >= 1400 ? 0.85 : w >= 1200 ? 0.78 : 0.72;
-        if (h < 720 && s > 0.9) s = 0.9;
-        if (h < 600 && s > 0.8) s = 0.8;
-        return s * UI_SCALE;
-    }
-    function applyScale() {
-        if (!panel) return;
-        const s = calcScale();
-        if ('zoom' in panel.style) panel.style.zoom = s;
-        else { panel.style.transformOrigin = 'top right'; panel.style.transform = `scale(${s})`; }
-    }
+    function calcScale() { const w = innerWidth, h = innerHeight; let s = w >= 3600 ? 1.40 : w >= 2800 ? 1.25 : w >= 2200 ? 1.10 : w >= 1920 ? 1.00 : w >= 1600 ? 0.92 : w >= 1400 ? 0.85 : w >= 1200 ? 0.78 : 0.72; if (h < 720 && s > 0.9) s = 0.9; if (h < 600 && s > 0.8) s = 0.8; return s * UI_SCALE; }
+    function applyScale() { if (!panel) return; const s = calcScale(); if ('zoom' in panel.style) panel.style.zoom = s; else { panel.style.transformOrigin = 'top right'; panel.style.transform = `scale(${s})`; } }
 
-    /* ===== 统计与日志 ===== */
+    /* ===== 统计 ===== */
     const runStats = { start: 0, last: 0, vCount: 0, vSec: 0 };
     let logEntries = [], logListEl = null, statRT = null, statV = null, statVC = null, statC = null;
     let logTimer = null;
     const _vRec = new WeakSet();
-
     const fmtHMS = s => { s = Math.max(0, Math.floor(s || 0)); return `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
     const fmtMS = s => { s = Math.max(0, s || 0); if (s < 60) return `${s.toFixed(0)}秒`; const m = s / 60; return m < 60 ? `${m.toFixed(1)}分钟` : `${Math.floor(m / 60)}小时${(m % 60).toFixed(0)}分`; };
-
     function addLog(text, type) {
         const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
         logEntries.push({ time, text, type: type || '' });
         if (logEntries.length > LOG_MAX) { logEntries.shift(); renderLog(); return; }
         if (!logListEl) return;
         if (logEntries.length === 1) logListEl.innerHTML = '';
-        const row = document.createElement('div');
-        row.className = 'qcc-log-item' + (type ? ' ' + type : '');
+        const row = document.createElement('div'); row.className = 'qcc-log-item' + (type ? ' ' + type : '');
         const t = document.createElement('span'); t.className = 'qcc-log-time'; t.textContent = time;
         const x = document.createElement('span'); x.className = 'qcc-log-text'; x.textContent = text;
         row.append(t, x);
@@ -413,26 +415,17 @@
         statVC.textContent = runStats.vCount + '个';
         statC.textContent = clickedTotal + '次';
     }
-    function resetStats() {
-        logEntries = []; runStats.vCount = 0; runStats.vSec = 0; runStats.last = 0;
-        if (isRunning) runStats.start = Date.now();
-        clickedTotal = 0;
-        renderLog(); updateStats();
-    }
+    function resetStats() { logEntries = []; runStats.vCount = 0; runStats.vSec = 0; runStats.last = 0; if (isRunning) runStats.start = Date.now(); clickedTotal = 0; renderLog(); updateStats(); }
     function recVideo(video, sec) {
         if (!video || _vRec.has(video)) return;
         _vRec.add(video);
         let w = sec;
-        if (typeof w !== 'number' || !isFinite(w) || w < 1) {
-            try { const ct = video.currentTime || 0, d = video.duration; w = (isFinite(d) && d > 0) ? Math.min(ct, d) : ct; } catch (e) { w = 0; }
-        }
+        if (typeof w !== 'number' || !isFinite(w) || w < 1) { try { const ct = video.currentTime || 0, d = video.duration; w = (isFinite(d) && d > 0) ? Math.min(ct, d) : ct; } catch (e) { w = 0; } }
         if (!isFinite(w) || w < 1) return;
         runStats.vSec += w; runStats.vCount++;
         addLog(`🎬 视频完成 +${fmtMS(w)}（累计 ${fmtMS(runStats.vSec)} / ${runStats.vCount}个）`, 'ok');
         updateStats();
     }
-
-    /* ===== 授权时间显示 ===== */
     function updateAuthTime() {
         const at = document.getElementById('qcc-auth-time');
         if (!at) return;
@@ -447,12 +440,7 @@
                 else {
                     const left = ex - Date.now();
                     if (left <= 0) info = { text: 'VIP · 已过期', cls: 'err' };
-                    else {
-                        const d = Math.ceil(left / 864e5);
-                        if (d > 30) { const dt = new Date(ex); info = { text: `VIP · 至 ${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`, cls: 'ok' }; }
-                        else if (d > 3) info = { text: `VIP · 剩余 ${d} 天`, cls: 'ok' };
-                        else info = { text: `VIP · 仅剩 ${d} 天`, cls: 'warn' };
-                    }
+                    else { const d = Math.ceil(left / 864e5); if (d > 30) { const dt = new Date(ex); info = { text: `VIP · 至 ${dt.getFullYear()}/${String(dt.getMonth() + 1).padStart(2, '0')}/${String(dt.getDate()).padStart(2, '0')}`, cls: 'ok' }; } else if (d > 3) info = { text: `VIP · 剩余 ${d} 天`, cls: 'ok' }; else info = { text: `VIP · 仅剩 ${d} 天`, cls: 'warn' }; }
                 }
             }
         }
@@ -462,34 +450,15 @@
 
     /* ===== UI 状态 ===== */
     function setStatus(text, cls) { if (!statusTextEl) return; statusTextEl.textContent = text; statusEl.className = 'qcc-status' + (cls ? ' ' + cls : ''); }
-    function getElText(el) {
-        if (!el) return '未知元素';
-        const t = (el.textContent || '').trim().replace(/\s+/g, ' ');
-        return t ? (t.length > 30 ? t.slice(0, 30) + '…' : t) : `[${(el.tagName || 'el').toLowerCase()}]`;
-    }
-    function renderList() {
-        if (!listCountEl) return;
-        listCountEl.textContent = selectedEls.length + '个';
-    }
-    function clearClickHighlight() {
-        if (clickHighlightTimer) { clearInterval(clickHighlightTimer); clickHighlightTimer = null; }
-        try { document.querySelectorAll('.qcc-clicking').forEach(x => x.classList.remove('qcc-clicking')); } catch (e) {}
-        currentClickingEl = null;
-    }
-    function clearSelected() {
-        clearClickHighlight();
-        selectedEls.forEach(el => { try { el.classList.remove('qcc-pick-selected'); } catch (e) {} });
-        selectedEls = [];
-        renderList();
-    }
+    function getElText(el) { if (!el) return '未知元素'; const t = (el.textContent || '').trim().replace(/\s+/g, ' '); return t ? (t.length > 30 ? t.slice(0, 30) + '…' : t) : `[${(el.tagName || 'el').toLowerCase()}]`; }
+    function renderList() { if (!listCountEl) return; listCountEl.textContent = selectedEls.length + '个'; }
+    function clearClickHighlight() { if (clickHighlightTimer) { clearInterval(clickHighlightTimer); clickHighlightTimer = null; } try { document.querySelectorAll('.qcc-clicking').forEach(x => x.classList.remove('qcc-clicking')); } catch (e) {} currentClickingEl = null; }
+    function clearSelected() { clearClickHighlight(); selectedEls.forEach(el => { try { el.classList.remove('qcc-pick-selected'); } catch (e) {} }); selectedEls = []; renderList(); }
     function updateRunButtons() {
         const b1 = document.getElementById('qcc-start'), b2 = document.getElementById('qcc-stop'), b3 = document.getElementById('qcc-pause');
         if (b1) { b1.disabled = isRunning; b1.innerHTML = preparing ? '<span class="qcc-btn-icon">⏳</span> 准备中…' : '<span class="qcc-btn-icon">▶</span> 开始'; }
         if (b2) b2.disabled = false;
-        if (b3) {
-            b3.disabled = !isRunning || preparing;
-            b3.innerHTML = isPaused ? '<span class="qcc-btn-icon">▶</span> 继续' : '<span class="qcc-btn-icon">⏸</span> 暂停';
-        }
+        if (b3) { b3.disabled = !isRunning || preparing; b3.innerHTML = isPaused ? '<span class="qcc-btn-icon">▶</span> 继续' : '<span class="qcc-btn-icon">⏸</span> 暂停'; }
     }
 
     /* ===== 手动选择 ===== */
@@ -506,20 +475,11 @@
         }
         return el;
     }
-    function updatePickBtn() {
-        const b = document.getElementById('qcc-auto-pick');
-        if (!b) return;
-        b.innerHTML = manualPicking ? '<span class="qcc-btn-icon">✋</span> 退出选择' : '<span class="qcc-btn-icon">👆</span> 手动选择';
-    }
+    function updatePickBtn() { const b = document.getElementById('qcc-auto-pick'); if (!b) return; b.innerHTML = manualPicking ? '<span class="qcc-btn-icon">✋</span> 退出选择' : '<span class="qcc-btn-icon">👆</span> 手动选择'; }
     function enterPick() {
         if (manualPicking) return;
         manualPicking = true;
-        overH = e => {
-            const el = pickTarget(e.target);
-            if (!el || hoverEl === el) return;
-            if (hoverEl) try { hoverEl.classList.remove('qcc-manual-hover'); } catch (e) {}
-            hoverEl = el; try { el.classList.add('qcc-manual-hover'); } catch (e) {}
-        };
+        overH = e => { const el = pickTarget(e.target); if (!el || hoverEl === el) return; if (hoverEl) try { hoverEl.classList.remove('qcc-manual-hover'); } catch (e) {} hoverEl = el; try { el.classList.add('qcc-manual-hover'); } catch (e) {} };
         clickH = e => {
             if (panel && panel.contains(e.target)) return;
             e.preventDefault(); e.stopPropagation();
@@ -544,22 +504,14 @@
         if (hoverEl) { try { hoverEl.classList.remove('qcc-manual-hover'); } catch (e) {} hoverEl = null; }
         try { document.body.style.cursor = ''; } catch (e) {}
         updatePickBtn();
-        if (clear) {
-            const n = selectedEls.length;
-            clearSelected();
-            setStatus(n > 0 ? `已退出选择，已清空 ${n} 个元素` : '已退出选择', '');
-            if (n > 0) addLog(`🗑️ 已退出选择，清空 ${n} 个元素`, '');
-        } else {
-            setStatus(selectedEls.length > 0 ? `已退出选择，保留 ${selectedEls.length} 个元素` : '已退出选择', '');
-        }
+        if (clear) { const n = selectedEls.length; clearSelected(); setStatus(n > 0 ? `已退出选择，已清空 ${n} 个元素` : '已退出选择', ''); if (n > 0) addLog(`🗑️ 已退出选择，清空 ${n} 个元素`, ''); }
+        else setStatus(selectedEls.length > 0 ? `已退出选择，保留 ${selectedEls.length} 个元素` : '已退出选择', '');
     }
 
     /* ===== 展开 ===== */
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-
     async function expandAll() {
         if (expanding) return;
-        expanding = true; leftNavCache = null; rootsDirty = true;
+        expanding = true;
         const st = Date.now(), dl = st + EXPAND_LIMIT;
         let total = 0;
         const once = new WeakSet();
@@ -569,18 +521,16 @@
             for (let loop = 0; loop < EXPAND_LOOPS; loop++) {
                 if (Date.now() > dl) break;
                 const arrows = [], seen = new Set();
-                for (const root of getAllRoots()) {
-                    let items;
-                    try { items = root.querySelectorAll('[class*="sub-menu-title"]'); } catch (e) { continue; }
-                    for (const el of items) {
-                        if (seen.has(el) || once.has(el) || (panel && panel.contains(el))) continue;
-                        seen.add(el);
-                        const svg = el.querySelector('svg.svg-icon');
-                        if (!svg) continue;
-                        const s = svg.getAttribute('style') || '';
-                        if (s.includes('rotate(180deg)')) continue;
-                        arrows.push({ svg, parent: el });
-                    }
+                let items;
+                try { items = document.querySelectorAll('[class*="sub-menu-title"]'); } catch (e) { items = []; }
+                for (const el of items) {
+                    if (seen.has(el) || once.has(el) || (panel && panel.contains(el))) continue;
+                    seen.add(el);
+                    const svg = el.querySelector('svg.svg-icon');
+                    if (!svg) continue;
+                    const s = svg.getAttribute('style') || '';
+                    if (s.includes('rotate(180deg)')) continue;
+                    arrows.push({ svg, parent: el });
                 }
                 if (!arrows.length) break;
                 setStatus(`展开中… 剩 ${arrows.length} 个，已点 ${total}`, 'running');
@@ -591,38 +541,26 @@
                     await sleep(EXPAND_GAP);
                 }
                 await sleep(EXPAND_LOOP_GAP);
-                leftNavCache = null;
             }
             const el = ((Date.now() - st) / 1000).toFixed(2);
             setStatus(`展开完成，共点击 ${total} 个（${el}秒）`, '');
             addLog(`📂 展开完成：点击 ${total} 个（${el}s）`, 'ok');
-        } finally { expanding = false; leftNavCache = null; rootsDirty = true; }
+        } finally { expanding = false; }
     }
 
     /* ===== 自动选择 ===== */
+    let leftNavEl = null, leftNavTime = 0;
+    const LEFT_NAV_TTL = 5000;
     function findLeftNav() {
-        if (leftNavCache && leftNavCache.isConnected) return leftNavCache;
-        for (const root of getAllRoots()) {
-            let all;
-            try { all = root.querySelectorAll('*'); } catch (e) { continue; }
-            for (const el of all) {
-                if (panel && panel.contains(el)) continue;
-                let s;
-                try { s = getComputedStyle(el); } catch (e) { continue; }
-                if (s.overflowY !== 'auto' && s.overflowY !== 'scroll') continue;
-                let r;
-                try { r = el.getBoundingClientRect(); } catch (e) { continue; }
-                if (r.width < 100 || r.width > 400 || r.left > 100) continue;
-                if (el.scrollHeight < el.clientHeight) continue;
-                leftNavCache = el; return el;
-            }
+        if (leftNavEl && leftNavEl.isConnected) return leftNavEl;
+        const now = Date.now();
+        if (now - leftNavTime < LEFT_NAV_TTL) return leftNavEl;
+        leftNavTime = now; leftNavEl = null;
+        const sels = ['#app .catalogue', '.catalogue', '.catalog', '[class*="catalog"]', '[class*="left-nav"]', '[class*="leftNav"]', 'aside', 'nav'];
+        for (const s of sels) {
+            try { const el = document.querySelector(s); if (el && !(panel && panel.contains(el))) { leftNavEl = el; return el; } } catch (e) {}
         }
         return null;
-    }
-    function inLeftNav(el) {
-        const nav = findLeftNav();
-        if (!nav) try { const r = el.getBoundingClientRect(); return r.left >= 0 && r.left <= 280; } catch (e) { return false; }
-        return nav.contains(el);
     }
     function resolveTarget(el) {
         let c = el;
@@ -636,51 +574,55 @@
         return el;
     }
     function collect() {
-        const out = new Set();
-        for (const root of getAllRoots()) {
-            let list;
-            try { list = root.querySelectorAll('.text-too-long'); } catch (e) { list = []; }
-            for (const el of list) {
-                if (panel && panel.contains(el) || isBold(el) || !inLeftNav(el)) continue;
-                let r;
-                try { r = el.getBoundingClientRect(); } catch (e) { continue; }
-                if (r.width < 20 || r.height < 8) continue;
-                let s;
-                try { s = getComputedStyle(el); } catch (e) { continue; }
-                if (s.display === 'none' || s.visibility === 'hidden') continue;
-                if (!(el.textContent || '').trim()) continue;
-                out.add(resolveTarget(el));
-            }
-        }
-        if (!out.size) {
-            for (const root of getAllRoots()) {
-                let all;
-                try { all = root.querySelectorAll('*'); } catch (e) { continue; }
-                for (const el of all) {
-                    if (panel && panel.contains(el) || isBold(el) || !inLeftNav(el)) continue;
-                    let r;
-                    try { r = el.getBoundingClientRect(); } catch (e) { continue; }
-                    if (r.width < 30 || r.height < 12 || r.height > 60) continue;
-                    let s;
-                    try { s = getComputedStyle(el); } catch (e) { continue; }
-                    if (s.cursor !== 'pointer' || s.display === 'none') continue;
-                    const t = (el.textContent || '').trim();
-                    if (!t || t.length > 80) continue;
-                    out.add(el);
-                }
-            }
-        }
-        return out;
+    const out = new Set();
+    const MAX = 300;
+
+    // ★ 路径 1：国开真实结构（a.title / .activity-title a / .activity-header a）
+    let list;
+    try { list = document.querySelectorAll('a.title, .activity-title a, .activity-header a'); } catch (e) { list = []; }
+    for (const el of list) {
+        if (out.size >= MAX) return out;
+        if (panel && panel.contains(el)) continue;
+        const t = (el.textContent || '').trim().replace(/\s+/g, ' ');
+        if (!t || t.length > 100) continue;
+        if (/^(首页|返回|登录|注册|帮助|个人中心|退出|简体中文|全部展开|全部收起|全部|形考任务|终考任务|讨论|目录|简介|直播|公告|学习工具|学习成就|学习成绩|学习分析)$/.test(t)) continue;
+        let r;
+        try { r = el.getBoundingClientRect(); } catch (e) { continue; }
+        if (r.width < 30 || r.height < 10) continue;
+        if (r.left < 180) continue;
+        if (r.top < 100) continue;
+        out.add(el);
     }
+    if (out.size) return out;
+
+    // ★ 路径 2：.text-too-long（旧逻辑兜底）
+    try { list = document.querySelectorAll('.text-too-long'); } catch (e) { list = []; }
+    for (const el of list) {
+        if (out.size >= MAX) return out;
+        if (panel && panel.contains(el)) continue;
+        if (isBold(el)) continue;
+        const t = (el.textContent || '').trim();
+        if (!t) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 20 || r.height < 8) continue;
+        let s; try { s = getComputedStyle(el); } catch (e) { continue; }
+        if (s.display === 'none' || s.visibility === 'hidden') continue;
+        out.add(resolveTarget(el));
+    }
+    return out;
+}
     async function autoPick() {
         if (picking) return;
         picking = true;
-        clearSelected(); leftNavCache = null;
+        clearSelected();
+        leftNavEl = null; leftNavTime = 0;
         setStatus('🔍 正在选择…', 'running');
         try {
             await sleep(200);
-            leftNavCache = null;
-            for (const el of collect()) {
+            let items;
+            try { items = collect(); }
+            catch (e) { reportErr('collect 失败', e, true); items = new Set(); }
+            for (const el of items) {
                 if (selectedEls.includes(el)) continue;
                 selectedEls.push(el);
                 try { el.classList.add('qcc-pick-selected'); } catch (e) {}
@@ -688,12 +630,11 @@
             renderList();
             setStatus(selectedEls.length === 0 ? '⚠️ 未找到可点击链接' : `✅ 已选择 ${selectedEls.length} 个可点击链接`, '');
             addLog(`🔍 选择完成：${selectedEls.length} 个可点击元素`, selectedEls.length ? 'ok' : '');
-        } finally { picking = false; leftNavCache = null; }
+        } finally { picking = false; }
     }
 
     /* ===== 视频 ===== */
     let autoPlayVideo = false, videoSpeed = 2;
-
     function allVideos() {
         const out = [], seen = new Set();
         const add = vs => { for (const v of vs) if (v.isConnected && !seen.has(v)) { seen.add(v); out.push(v); } };
@@ -739,21 +680,10 @@
         video.addEventListener('volumechange', onVC);
         video.addEventListener('timeupdate', onTU);
         const rt = setInterval(fr, 500);
-        const kt = setInterval(() => {
-            if (!isRunning) return;
-            try { if (video.paused && !video.ended && video.isConnected) video.play().catch(() => {}); fm(); fr(); } catch (e) {}
-        }, 2000);
-        const cleanup = () => {
-            video.removeEventListener('ratechange', onRC); video.removeEventListener('pause', onPause);
-            video.removeEventListener('volumechange', onVC); video.removeEventListener('timeupdate', onTU);
-            clearInterval(rt); clearInterval(kt);
-        };
-        try {
-            video.muted = true; video.volume = 0; fr();
-            try { video.currentTime = 0; } catch (e) {}
-            await video.play(); fr();
-            try { video.currentTime = 0; } catch (e) {}
-        } catch (e) { reportErr('视频 play() 失败', e, true); cleanup(); return false; }
+        const kt = setInterval(() => { if (!isRunning) return; try { if (video.paused && !video.ended && video.isConnected) video.play().catch(() => {}); fm(); fr(); } catch (e) {} }, 2000);
+        const cleanup = () => { video.removeEventListener('ratechange', onRC); video.removeEventListener('pause', onPause); video.removeEventListener('volumechange', onVC); video.removeEventListener('timeupdate', onTU); clearInterval(rt); clearInterval(kt); };
+        try { video.muted = true; video.volume = 0; fr(); try { video.currentTime = 0; } catch (e) {} await video.play(); fr(); try { video.currentTime = 0; } catch (e) {} }
+        catch (e) { reportErr('视频 play() 失败', e, true); cleanup(); return false; }
         await new Promise(res => {
             let last = -1, stuck = 0;
             const st = Date.now();
@@ -761,9 +691,7 @@
                 if (!video.isConnected || video.ended) return res();
                 const ct = video.currentTime || 0, d = video.duration || 0;
                 if (d > 0 && isFinite(d) && ct >= d - 0.3) return res();
-                if (Date.now() - st > V_GRACE) {
-                    if (ct > 0 && Math.abs(ct - last) < 0.05) { stuck++; if (stuck > V_STUCK) return res(); } else stuck = 0;
-                }
+                if (Date.now() - st > V_GRACE) { if (ct > 0 && Math.abs(ct - last) < 0.05) { stuck++; if (stuck > V_STUCK) return res(); } else stuck = 0; }
                 last = ct; fr(); fm(); setTimeout(check, 500);
             };
             check();
@@ -771,6 +699,62 @@
         cleanup();
         try { recVideo(video, watched); } catch (e) {}
         return true;
+    }
+
+    /* ===== 章节列表页：进入第一个学习条目 ===== */
+    async function autoEnterFirstLesson() {
+        setResume();
+        setStatus('📂 检测到章节列表页', 'running');
+        addLog('📂 进入章节列表处理流程', 'ok');
+
+        // 1. 判断当前是折叠还是展开态
+        if (findExpandAllButton()) {
+            addLog('✅ 发现「全部展开」，点击它', 'ok');
+            clickExpandAll();
+            const ok = await waitForCollapseAll(5000);
+            if (ok) addLog('✅ 目录已展开（出现「全部收起」）', 'ok');
+            else addLog('⚠️ 等待展开超时，继续尝试', 'err');
+        } else if (findCollapseAllButton()) {
+            addLog('ℹ️ 已处于展开态（有「全部收起」），跳过展开', '');
+        } else {
+            addLog('⚠️ 未识别到展开/收起按钮', 'err');
+        }
+
+        // 2. 等 DOM 渲染
+        await sleep(1500);
+
+        // 3. 找第一个可点条目
+        const entry = findFirstEntry();
+        if (!entry) {
+            setStatus('⚠️ 未找到可点击条目', 'err');
+            addLog('⚠️ 未找到可点击条目，终止', 'err');
+            clearResume();
+            isRunning = false; preparing = false;
+            updateRunButtons();
+            return;
+        }
+
+        const label = (entry.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30) || '[未命名]';
+        addLog(`👉 即将进入：${label}`, 'ok');
+        setStatus(`📂 正在进入：${label}`, 'running');
+
+        // 4. 点击
+        const oldUrl = location.href;
+        try { realClick(pickClick(entry) || entry); }
+        catch (e) { reportErr('点击条目失败', e, false); }
+
+        // 5. 等跳转
+        await sleep(2000);
+        if (location.href !== oldUrl) {
+            addLog('🔄 SPA 跳转成功，2.5 秒后续跑', 'ok');
+            await sleep(2500);
+            clearResume();
+            isRunning = false; preparing = false;
+            selectedEls = []; renderList();
+            startClicking();
+        } else {
+            addLog('⏳ 等待页面刷新后自动续跑', 'ok');
+        }
     }
 
     /* ===== 主循环 ===== */
@@ -782,19 +766,14 @@
         clickHighlightTimer = setInterval(() => {
             if (!currentClickingEl) return;
             try { if (currentClickingEl.isConnected && !currentClickingEl.classList.contains('qcc-clicking')) currentClickingEl.classList.add('qcc-clicking'); } catch (e) {}
-        }, 150);
+        }, 400);
     }
-
     async function doClick() {
         if (!isRunning || processingVideo) return;
         if (!selectedEls.length) { stopClicking(); setStatus('没有可点击的元素', ''); return; }
         selectedEls = selectedEls.filter(el => el.isConnected);
         if (!selectedEls.length) { stopClicking(); setStatus('所有元素已从页面移除', ''); renderList(); return; }
-        if (maxClicks > 0 && clickedTotal >= maxClicks) {
-            setStatus(`✅ 已达最大点击次数 ${maxClicks}，自动停止`, 'ok');
-            addLog(`✅ 已达最大点击次数 ${maxClicks}`, 'ok');
-            stopClicking(); return;
-        }
+        if (maxClicks > 0 && clickedTotal >= maxClicks) { setStatus(`✅ 已达最大点击次数 ${maxClicks}`, 'ok'); addLog(`✅ 已达最大点击次数 ${maxClicks}`, 'ok'); stopClicking(); return; }
         const el = selectedEls[clickIndex % selectedEls.length];
         const oldKeys = snapVKeys();
         const label = getElText(el);
@@ -811,11 +790,10 @@
         processingVideo = true; updateRunButtons();
         setStatus(`🎬 检测到新视频，正在 ${videoSpeed} 倍速静音播放…`, 'running');
         addLog(`🎬 检测到视频，${videoSpeed}x 静音播放中…`, '');
-        try { await playVideo(video); if (isRunning) setStatus('✅ 视频播放完成，准备下一个', ''); }
+        try { await playVideo(video); if (isRunning) setStatus('✅ 视频播放完成', ''); }
         catch (e) { reportErr('播放异常', e, false); }
         finally { processingVideo = false; updateRunButtons(); }
     }
-
     let loopRunning = false;
     async function mainLoop() {
         if (loopRunning || !isRunning) return;
@@ -832,9 +810,24 @@
         } finally { loopRunning = false; }
     }
 
+    /* ===== startClicking（三分支） ===== */
     async function startClicking() {
         if (isRunning) return;
         if (manualPicking) exitPick(false);
+
+        await sleep(800);
+
+        // ★ 分支 C：学习活动页 → 直接刷课
+        if (isLearningActivityPage()) {
+            addLog('✅ 学习活动页，直接开始刷课', 'ok');
+        }
+        // ★ 分支 A/B：章节列表页 → 展开 + 点第一个条目
+        else if (isChapterListPage()) {
+            await autoEnterFirstLesson();
+            return;
+        }
+        // 其他页面：按原逻辑
+
         if (!selectedEls.length && !authorized) {
             setStatus('请先手动选择元素，或授权后自动处理', '');
             addLog('⚠️ 无法开始：未授权且未选择任何元素', 'err');
@@ -844,51 +837,46 @@
         try { if (worker) worker.postMessage({ cmd: 'stop' }); } catch (e) {}
         isRunning = true; isPaused = false; processingVideo = false; preparing = false;
         clickIndex = 0; clickedTotal = 0;
+
         if (authorized && !selectedEls.length) {
             preparing = true; updateRunButtons();
             addLog('▶ 开始运行 - 准备阶段', 'ok');
-            setStatus('⏳ 准备中：正在展开目录（第 1/2 轮）…', 'running');
+
+            setStatus('⏳ 准备中：展开目录（第 1/2 轮）…', 'running');
             await expandAll();
-            if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在展开阶段停止了运行', 'err'); return; }
+            if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在展开阶段停止', 'err'); return; }
             await sleep(EXPAND_ROUND_GAP);
-            setStatus('⏳ 准备中：正在展开目录（第 2/2 轮）…', 'running');
+
+            setStatus('⏳ 准备中：展开目录（第 2/2 轮）…', 'running');
             await expandAll();
-            if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在展开阶段停止了运行', 'err'); return; }
-            setStatus('⏳ 准备中：正在自动选择元素…', 'running');
+            if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在展开阶段停止', 'err'); return; }
+
+            setStatus('⏳ 准备中：自动选择元素…', 'running');
             await autoPick();
-            if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在选择阶段停止了运行', 'err'); return; }
+            if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在选择阶段停止', 'err'); return; }
             preparing = false; updateRunButtons();
         } else if (authorized && selectedEls.length) {
-            addLog(`▶ 开始运行 - 使用已选择的 ${selectedEls.length} 个元素（跳过展开）`, 'ok');
+            addLog(`▶ 使用已选择的 ${selectedEls.length} 个元素（跳过展开）`, 'ok');
         }
+
         if (!selectedEls.length) {
             isRunning = false; preparing = false; updateRunButtons();
-            setStatus('⚠️ 未找到可点击元素，无法开始', '');
-            addLog('⚠️ 未找到可点击元素，无法开始', 'err');
+            setStatus('⚠️ 未找到可点击元素', '');
+            addLog('⚠️ 未找到可点击元素', 'err');
             return;
         }
+
         runStats.start = Date.now(); runStats.vCount = 0; runStats.vSec = 0; runStats.last = 0;
         updateStats(); enableKA(); updateRunButtons();
-        setStatus('开始执行…（无限循环，随机间隔 2~12 秒）', 'running');
-        addLog(`▶ 正式开始（${selectedEls.length} 个元素，间隔 2~12 秒，${autoPlayVideo ? videoSpeed + 'x 自动播放' : '⚠ 未开启自动播放'}${maxClicks > 0 ? '，上限 ' + maxClicks + ' 次' : ''}）`, autoPlayVideo ? 'ok' : 'err');
+        setStatus('开始执行…（随机间隔 2~12 秒）', 'running');
+        addLog(`▶ 正式开始（${selectedEls.length} 个元素，${autoPlayVideo ? videoSpeed + 'x 自动播放' : '⚠ 未开启自动播放'}）`, autoPlayVideo ? 'ok' : 'err');
         mainLoop();
     }
-    function pauseClicking() {
-        if (!isRunning || isPaused) return;
-        isPaused = true;
-        setStatus('⏸ 已暂停，点击「继续」恢复', '');
-        addLog('⏸ 已暂停', '');
-        updateRunButtons();
-    }
-    function resumeClicking() {
-        if (!isRunning || !isPaused) return;
-        isPaused = false;
-        setStatus('▶ 继续执行…', 'running');
-        addLog('▶ 继续', 'ok');
-        updateRunButtons();
-    }
+    function pauseClicking() { if (!isRunning || isPaused) return; isPaused = true; setStatus('⏸ 已暂停', ''); addLog('⏸ 已暂停', ''); updateRunButtons(); }
+    function resumeClicking() { if (!isRunning || !isPaused) return; isPaused = false; setStatus('▶ 继续执行…', 'running'); addLog('▶ 继续', 'ok'); updateRunButtons(); }
     function stopClicking() {
         if (!isRunning) { setStatus('当前未运行', ''); return; }
+        clearResume();
         isRunning = false; isPaused = false; preparing = false;
         interruptDelay(); disableKA();
         try { if (worker) worker.postMessage({ cmd: 'stop' }); } catch (e) {}
@@ -899,17 +887,11 @@
         setStatus(selectedEls.length ? `已停止（选择列表保留 ${selectedEls.length} 个）` : '已停止', '');
         updateStats();
     }
-
     async function exportLogs() {
         const text = logEntries.map(e => `[${e.time}] ${e.text}`).join('\n');
         if (!text) { setStatus('暂无日志可导出', ''); return; }
         try { await navigator.clipboard.writeText(text); setStatus(`📋 日志已复制（${logEntries.length} 条）`, 'ok'); addLog('📋 日志已复制到剪贴板', 'ok'); }
-        catch (e) {
-            const ta = document.createElement('textarea'); ta.value = text;
-            document.body.appendChild(ta); ta.select();
-            try { document.execCommand('copy'); setStatus('📋 日志已复制', 'ok'); } catch (err) { setStatus('❌ 复制失败', ''); }
-            document.body.removeChild(ta);
-        }
+        catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); setStatus('📋 日志已复制', 'ok'); } catch (err) { setStatus('❌ 复制失败', ''); } document.body.removeChild(ta); }
     }
 
     /* ===== 授权弹窗 ===== */
@@ -955,7 +937,7 @@
         let esc = null;
         const close = () => { try { m.remove(); } catch (e) {} if (esc) document.removeEventListener('keydown', esc); };
         const sync = () => {
-            if (authorized) { wrap.classList.add('is-ok'); inp.value = authCode; inp.disabled = true; btn.disabled = true; btn.textContent = '已授权'; msg.textContent = '✅ 功能已解锁，可以使用了'; msg.className = 'qcc-auth-msg ok'; }
+            if (authorized) { wrap.classList.add('is-ok'); inp.value = authCode; inp.disabled = true; btn.disabled = true; btn.textContent = '已授权'; msg.textContent = '✅ 功能已解锁'; msg.className = 'qcc-auth-msg ok'; }
             else { wrap.classList.remove('is-ok'); inp.disabled = false; btn.disabled = false; btn.textContent = '确认'; msg.textContent = authCode ? '⚠️ 上次验证未通过，请重新验证' : '输入卡密后点击「确认」解锁功能'; msg.className = 'qcc-auth-msg'; if (authCode) inp.value = authCode; }
         };
         const tryAuth = async () => {
@@ -995,7 +977,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v5.2.5</span>
+                    <span class="qcc-badge">v5.4.0</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
@@ -1008,10 +990,7 @@
                         <span>⚙️</span>
                         <span class="qcc-theme-mini">
                             <span class="qcc-theme-label" data-theme="light">浅</span>
-                            <label class="qcc-switch qcc-theme-switch-mini">
-                                <input type="checkbox" id="qcc-theme-toggle">
-                                <span class="qcc-switch-slider"></span>
-                            </label>
+                            <label class="qcc-switch qcc-theme-switch-mini"><input type="checkbox" id="qcc-theme-toggle"><span class="qcc-switch-slider"></span></label>
                             <span class="qcc-theme-label" data-theme="dark">深</span>
                         </span>
                         <span class="qcc-auth-tip" id="qcc-auth-tip">授权后可全自动学习</span>
@@ -1044,10 +1023,7 @@
                 <div class="qcc-status" id="qcc-status"><span class="qcc-status-dot"></span><span id="qcc-status-text">等待操作</span></div>
                 <div class="qcc-log-box">
                     <div class="qcc-picked-bar"><span>已选择学习的目标的数量</span><span class="qcc-list-count" id="qcc-list-count">0个</span></div>
-                    <div class="qcc-log-header">
-                        <span>📊 运行统计 · 日志</span>
-                        <span class="qcc-log-actions"><button class="qcc-log-reset" id="qcc-log-export">导出</button><button class="qcc-log-reset" id="qcc-log-reset">重置</button></span>
-                    </div>
+                    <div class="qcc-log-header"><span>📊 运行统计 · 日志</span><span class="qcc-log-actions"><button class="qcc-log-reset" id="qcc-log-export">导出</button><button class="qcc-log-reset" id="qcc-log-reset">重置</button></span></div>
                     <div class="qcc-stat-compact">
                         <span>运行 <b id="qcc-stat-runtime">00:00:00</b></span>
                         <span>视频 <b id="qcc-stat-video">0分钟</b> (<b id="qcc-stat-videos">0个</b>)</span>
@@ -1100,8 +1076,8 @@
 .qcc-inline-btn .qcc-btn-icon{font-size:11px;line-height:1}
 .qcc-num-input{flex:0 0 42px !important;width:42px !important;height:20px !important;min-height:20px !important;max-height:20px !important;margin:0 !important;border:0 !important;background:linear-gradient(180deg,#34d17a 0%,#12b76a 100%) !important;color:#fff !important;border-radius:10px !important;padding:0 6px !important;font-size:10px !important;font-weight:600 !important;line-height:20px !important;outline:none !important;box-shadow:0 2px 6px rgba(18,183,106,.28) !important;font-family:inherit !important;text-align:center !important;transition:background .18s,box-shadow .18s !important;-moz-appearance:textfield !important;font-variant-numeric:tabular-nums !important;display:inline-block !important;vertical-align:middle !important}
 .qcc-num-input::-webkit-outer-spin-button,.qcc-num-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
-.qcc-num-input:hover:not(:disabled){background:linear-gradient(180deg,#43dc8a 0%,#22c876 100%) !important;box-shadow:0 2px 8px rgba(18,183,106,.38) !important}
-.qcc-num-input:focus{box-shadow:0 0 0 3px rgba(18,183,106,.25),0 2px 8px rgba(18,183,106,.4) !important}
+.qcc-num-input:hover:not(:disabled){background:linear-gradient(180deg,#43dc8a 0%,#22c876 100%) !important}
+.qcc-num-input:focus{box-shadow:0 0 0 3px rgba(18,183,106,.25) !important}
 .qcc-num-input:disabled{opacity:.35;filter:grayscale(1);cursor:not-allowed}
 .qcc-field-double{gap:10px}
 .qcc-double-item{flex:1;display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;line-height:20px}
@@ -1112,15 +1088,8 @@
 .qcc-btn-icon{font-size:11px;line-height:1}
 .qcc-btn:disabled{opacity:.4;cursor:not-allowed}
 .qcc-btn:not(:disabled):active{transform:scale(.97)}
-.qcc-btn-primary{background:linear-gradient(180deg,#5b78ff 0%,#4f6ef7 100%);color:#fff;box-shadow:0 4px 14px rgba(79,110,247,.3)}
-.qcc-btn-success{
-    background:linear-gradient(180deg,#34d17a 0%,#12b76a 100%);
-    color:#0a3d2e;   /* 深墨绿色，清晰可见 */
-    box-shadow:0 4px 14px rgba(18,183,106,.3);
-}
-#quick-custom-clicker.qcc-dark .qcc-btn-success{
-    color:#0a3d2e;   /* 深色模式同样用深色字，因为背景是亮绿 */
-}
+.qcc-btn-success{background:linear-gradient(180deg,#34d17a 0%,#12b76a 100%);color:#0a3d2e;box-shadow:0 4px 14px rgba(18,183,106,.3)}
+#quick-custom-clicker.qcc-dark .qcc-btn-success{color:#0a3d2e}
 .qcc-btn-danger{background:rgba(255,59,48,.08);color:#ff3b30}
 .qcc-btn-danger:not(:disabled):hover{background:rgba(255,59,48,.15)}
 .qcc-btn-ghost{background:rgba(15,23,42,.05);color:#3a3a3c}
@@ -1173,8 +1142,6 @@
 .qcc-log-list{max-height:60px;overflow-y:auto;font-size:10px;line-height:1.5}
 .qcc-log-list::-webkit-scrollbar{width:10px}
 .qcc-log-list::-webkit-scrollbar-thumb{background:rgba(120,120,120,.55);border-radius:5px;border:2px solid transparent;background-clip:content-box}
-.qcc-log-list::-webkit-scrollbar-thumb:hover{background:rgba(100,100,100,.75)}
-.qcc-log-list::-webkit-scrollbar-button{display:none;width:0;height:0}
 .qcc-log-item{display:flex;gap:6px;padding:2px 0;border-bottom:.5px solid rgba(15,23,42,.04)}
 .qcc-log-time{color:#a1a1a6;flex-shrink:0;font-variant-numeric:tabular-nums}
 .qcc-log-text{color:#3a3a3c;word-break:break-all}
@@ -1196,7 +1163,7 @@
 .qcc-trial-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 .qcc-trial-label{font-size:10px;font-weight:600;color:#b25e00}
 .qcc-trial-copy{height:20px;padding:0 8px;border:0;border-radius:6px;background:linear-gradient(180deg,#ffb340 0%,#f79009 100%);color:#fff;font-size:10px;font-weight:600;cursor:pointer;font-family:inherit;box-shadow:0 2px 6px rgba(247,144,9,.3);transition:all .18s;display:inline-flex;align-items:center}
-.qcc-trial-copy.copied{background:linear-gradient(180deg,#34d17a 0%,#12b76a 100%);box-shadow:0 2px 6px rgba(18,183,106,.3)}
+.qcc-trial-copy.copied{background:linear-gradient(180deg,#34d17a 0%,#12b76a 100%)}
 .qcc-trial-code{font-size:12px;font-weight:700;color:#1d1d1f;font-family:ui-monospace,Menlo,monospace;letter-spacing:.1em;word-break:break-all;background:rgba(255,255,255,.75);padding:6px 9px;border-radius:6px;user-select:text;text-align:center}
 .qcc-donate-auth{text-align:left;background:rgba(255,149,0,.08);border:.5px solid rgba(255,149,0,.22);border-radius:10px;padding:10px;margin-bottom:12px;transition:.2s}
 .qcc-donate-auth.is-ok{background:rgba(18,183,106,.08);border-color:rgba(18,183,106,.25)}
@@ -1215,17 +1182,10 @@
 .qcc-auth-msg.ok{color:#12b76a}
 .qcc-donate-close{width:100%;border:0;border-radius:10px;padding:9px 12px;background:rgba(15,23,42,.06);color:#3a3a3c;font-size:11.5px;cursor:pointer;font-family:inherit}
 .qcc-donate-close:hover{background:rgba(15,23,42,.11)}
-/* ★ 深色主题（由 .qcc-dark 类激活）★ */
-#quick-custom-clicker.qcc-dark .qcc-switch-slider {
-    background: rgba(255, 255, 255, 0.22);
-}
-#quick-custom-clicker.qcc-dark{background:rgba(30,30,32,.88);color:#f5f5f7;color-scheme:dark;box-shadow:0 20px 60px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.3),0 1px 0 rgba(255,255,255,.06) inset,0 0 0 .5px rgba(255,255,255,.06)}
+#quick-custom-clicker.qcc-dark{background:rgba(30,30,32,.88);color:#f5f5f7;color-scheme:dark;box-shadow:0 20px 60px rgba(0,0,0,.5),0 8px 24px rgba(0,0,0,.3)}
 #quick-custom-clicker.qcc-dark .qcc-header{background:#3a4a55}
-#quick-custom-clicker.qcc-dark .qcc-body::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18)}
 #quick-custom-clicker.qcc-dark .qcc-section-title{color:#8e8e93}
-#quick-custom-clicker.qcc-dark .qcc-field-head label,
-#quick-custom-clicker.qcc-dark .qcc-field-row label,
-#quick-custom-clicker.qcc-dark .qcc-double-item label{color:#c7c7cc}
+#quick-custom-clicker.qcc-dark .qcc-field-head label,#quick-custom-clicker.qcc-dark .qcc-field-row label,#quick-custom-clicker.qcc-dark .qcc-double-item label{color:#c7c7cc}
 #quick-custom-clicker.qcc-dark .qcc-auth-tip{color:#f5f5f7}
 #quick-custom-clicker.qcc-dark .qcc-theme-mini .qcc-theme-label{color:#8e8e93}
 #quick-custom-clicker.qcc-dark .qcc-theme-mini .qcc-theme-label.active{color:#8ba0ff}
@@ -1239,47 +1199,9 @@
 #quick-custom-clicker.qcc-dark .qcc-log-time{color:#8e8e93}
 #quick-custom-clicker.qcc-dark .qcc-log-item{border-bottom-color:rgba(255,255,255,.05)}
 #quick-custom-clicker.qcc-dark .qcc-btn-ghost{background:rgba(255,255,255,.08);color:#c7c7cc}
-#quick-custom-clicker.qcc-dark .qcc-btn-ghost:not(:disabled):hover{background:rgba(255,255,255,.14)}
 #quick-custom-clicker.qcc-dark .qcc-speed-btn{background:rgba(255,255,255,.08);color:#c7c7cc;border-color:rgba(255,255,255,.12)}
-#quick-custom-clicker.qcc-dark .qcc-speed-btn:hover{background:rgba(255,255,255,.15)}
-#quick-custom-clicker.qcc-dark .qcc-speed-btn.active {
-    background: linear-gradient(180deg, #6b85ff 0%, #5b78ff 100%);
-    color: #fff;
-    border-color: transparent;
-    box-shadow: 0 2px 8px rgba(79,110,247,.4);
-}
-#quick-custom-clicker.qcc-dark .qcc-log-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.35);border:2px solid transparent;background-clip:content-box}
-#quick-custom-clicker.qcc-dark .qcc-log-list::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.5)}
-/* ===== 顶部状态行字体统一为“执行 · 手动模式”样式 ===== */
-#quick-custom-clicker .qcc-section-title .qcc-theme-mini .qcc-theme-label,
-#quick-custom-clicker .qcc-section-title .qcc-auth-tip,
-#quick-custom-clicker .qcc-section-title .qcc-auth-time {
-    font-size: 10px !important;
-    font-weight: 600 !important;
-    letter-spacing: .04em !important;
-    text-transform: uppercase !important;
-}
-/* 主题开关上的 浅/深 文字保持切换颜色不被覆盖 */
-#quick-custom-clicker .qcc-section-title .qcc-theme-mini .qcc-theme-label.active {
-    color: #4f6ef7 !important;
-}
-#quick-custom-clicker.qcc-dark .qcc-section-title .qcc-theme-mini .qcc-theme-label.active {
-    color: #8ba0ff !important;
-}
-/* [未授权]/[VIP] 徽章保持胶囊高度 */
-#quick-custom-clicker .qcc-section-title .qcc-auth-time {
-    height: 20px !important;
-    line-height: 20px !important;
-    letter-spacing: 0 !important;
-    text-transform: none !important;
-}
-/* “授权后可全自动学习”与执行标题同色 */
-#quick-custom-clicker .qcc-section-title .qcc-auth-tip {
-    color: #8e8e93 !important;
-}
-#quick-custom-clicker.qcc-dark .qcc-section-title .qcc-auth-tip {
-    color: #8e8e93 !important;
-}`;
+#quick-custom-clicker.qcc-dark .qcc-speed-btn.active{background:linear-gradient(180deg,#6b85ff 0%,#5b78ff 100%);color:#fff;border-color:transparent}
+`;
         document.head.appendChild(s);
         document.body.appendChild(panel);
         applyScale();
@@ -1301,15 +1223,9 @@
         document.getElementById('qcc-log-reset').addEventListener('click', () => { resetStats(); setStatus('日志与统计已重置', ''); });
         document.getElementById('qcc-log-export').addEventListener('click', exportLogs);
 
-        /* 主题切换：开关 + 文字点击 */
         const themeToggle = document.getElementById('qcc-theme-toggle');
-        if (themeToggle) {
-            themeToggle.checked = isDarkTheme;
-            themeToggle.addEventListener('change', () => { isDarkTheme = themeToggle.checked; applyTheme(); });
-        }
-        panel.querySelectorAll('.qcc-theme-label').forEach(l => {
-            l.addEventListener('click', () => { isDarkTheme = (l.dataset.theme === 'dark'); applyTheme(); });
-        });
+        if (themeToggle) { themeToggle.checked = isDarkTheme; themeToggle.addEventListener('change', () => { isDarkTheme = themeToggle.checked; applyTheme(); }); }
+        panel.querySelectorAll('.qcc-theme-label').forEach(l => { l.addEventListener('click', () => { isDarkTheme = (l.dataset.theme === 'dark'); applyTheme(); }); });
 
         const av = document.getElementById('qcc-auto-video');
         const sb = document.getElementById('qcc-speed-block');
@@ -1429,7 +1345,15 @@
             await loadAuth();
             updatePickBtn();
             if (syncAuthUI) try { syncAuthUI(); } catch (e) {}
-            setStatus(authorized ? '✅ 已授权，点开始自动运行' : (authCode ? '⚠️ 上次验证未通过，请重新验证' : '等待操作'), '');
+            setStatus(authorized ? '✅ 已授权，点开始自动运行' : (authCode ? '⚠️ 上次验证未通过' : '等待操作'), '');
+
+            // ★ 页面刷新后检测续跑标志
+            if (authorized && getResume()) {
+                addLog('🔄 检测到续跑标志，2.5 秒后自动开始', 'ok');
+                await sleep(2500);
+                clearResume();
+                startClicking();
+            }
         })();
     }
 
