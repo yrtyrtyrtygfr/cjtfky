@@ -1,10 +1,11 @@
 // ==UserScript==
 // @name         新国开/国开/国家开放大学自动刷课+次数和时长（试用卡版）
 // @namespace    https://scriptcat.org/
-// @version      5.4.0
-// @description 新国开｜国开｜国家开放大学｜浅色/深色主题｜点击绿框保持｜授权后全自动展开→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活
+// @version      5.4.2
+// @description 新国开｜国开｜国家开放大学｜浅色/深色主题｜点击绿框保持｜授权后全自动展开→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活｜门户页操作指引
 // @author       You
 // @match        *://lms.ouchn.cn/*
+// @match        *://menhu.pt.ouchn.cn/*
 // @noframes
 // @icon         https://raw.githubusercontent.com/yrtyrtyrtygfr/cjtfky/main/gd1.png
 // @grant        GM_xmlhttpRequest
@@ -120,24 +121,23 @@
         return false;
     }
     function findFirstEntry() {
-    // ★ 国开真实结构：a.title / .activity-title a / .activity-header a
-    const cands = document.querySelectorAll('a.title, .activity-title a, .activity-header a');
-    const list = [];
-    for (const a of cands) {
-        if (panel && panel.contains(a)) continue;
-        let r;
-        try { r = a.getBoundingClientRect(); } catch (e) { continue; }
-        if (r.width < 30 || r.height < 12) continue;
-        if (r.left < 180) continue;    // 排除左侧菜单
-        if (r.top < 100) continue;     // 排除顶部
-        const t = (a.textContent || '').trim().replace(/\s+/g, ' ');
-        if (!t || t.length > 100) continue;
-        if (/全部展开|全部收起|形考任务|终考任务|讨论/.test(t)) continue;
-        list.push({ el: a, top: r.top, left: r.left });
+        const cands = document.querySelectorAll('a.title, .activity-title a, .activity-header a');
+        const list = [];
+        for (const a of cands) {
+            if (panel && panel.contains(a)) continue;
+            let r;
+            try { r = a.getBoundingClientRect(); } catch (e) { continue; }
+            if (r.width < 30 || r.height < 12) continue;
+            if (r.left < 180) continue;
+            if (r.top < 100) continue;
+            const t = (a.textContent || '').trim().replace(/\s+/g, ' ');
+            if (!t || t.length > 100) continue;
+            if (/全部展开|全部收起|形考任务|终考任务|讨论/.test(t)) continue;
+            list.push({ el: a, top: r.top, left: r.left });
+        }
+        list.sort((a, b) => a.top - b.top || a.left - b.left);
+        return list.length ? list[0].el : null;
     }
-    list.sort((a, b) => a.top - b.top || a.left - b.left);
-    return list.length ? list[0].el : null;
-}
 
     /* ===== 主题 ===== */
     function loadTheme() {
@@ -549,19 +549,6 @@
     }
 
     /* ===== 自动选择 ===== */
-    let leftNavEl = null, leftNavTime = 0;
-    const LEFT_NAV_TTL = 5000;
-    function findLeftNav() {
-        if (leftNavEl && leftNavEl.isConnected) return leftNavEl;
-        const now = Date.now();
-        if (now - leftNavTime < LEFT_NAV_TTL) return leftNavEl;
-        leftNavTime = now; leftNavEl = null;
-        const sels = ['#app .catalogue', '.catalogue', '.catalog', '[class*="catalog"]', '[class*="left-nav"]', '[class*="leftNav"]', 'aside', 'nav'];
-        for (const s of sels) {
-            try { const el = document.querySelector(s); if (el && !(panel && panel.contains(el))) { leftNavEl = el; return el; } } catch (e) {}
-        }
-        return null;
-    }
     function resolveTarget(el) {
         let c = el;
         for (let i = 0; i < 4 && c; i++) {
@@ -574,48 +561,45 @@
         return el;
     }
     function collect() {
-    const out = new Set();
-    const MAX = 300;
+        const out = new Set();
+        const MAX = 300;
 
-    // ★ 路径 1：国开真实结构（a.title / .activity-title a / .activity-header a）
-    let list;
-    try { list = document.querySelectorAll('a.title, .activity-title a, .activity-header a'); } catch (e) { list = []; }
-    for (const el of list) {
-        if (out.size >= MAX) return out;
-        if (panel && panel.contains(el)) continue;
-        const t = (el.textContent || '').trim().replace(/\s+/g, ' ');
-        if (!t || t.length > 100) continue;
-        if (/^(首页|返回|登录|注册|帮助|个人中心|退出|简体中文|全部展开|全部收起|全部|形考任务|终考任务|讨论|目录|简介|直播|公告|学习工具|学习成就|学习成绩|学习分析)$/.test(t)) continue;
-        let r;
-        try { r = el.getBoundingClientRect(); } catch (e) { continue; }
-        if (r.width < 30 || r.height < 10) continue;
-        if (r.left < 180) continue;
-        if (r.top < 100) continue;
-        out.add(el);
-    }
-    if (out.size) return out;
+        let list;
+        try { list = document.querySelectorAll('a.title, .activity-title a, .activity-header a'); } catch (e) { list = []; }
+        for (const el of list) {
+            if (out.size >= MAX) return out;
+            if (panel && panel.contains(el)) continue;
+            const t = (el.textContent || '').trim().replace(/\s+/g, ' ');
+            if (!t || t.length > 100) continue;
+            if (/^(首页|返回|登录|注册|帮助|个人中心|退出|简体中文|全部展开|全部收起|全部|形考任务|终考任务|讨论|目录|简介|直播|公告|学习工具|学习成就|学习成绩|学习分析)$/.test(t)) continue;
+            let r;
+            try { r = el.getBoundingClientRect(); } catch (e) { continue; }
+            if (r.width < 30 || r.height < 10) continue;
+            if (r.left < 180) continue;
+            if (r.top < 100) continue;
+            out.add(el);
+        }
+        if (out.size) return out;
 
-    // ★ 路径 2：.text-too-long（旧逻辑兜底）
-    try { list = document.querySelectorAll('.text-too-long'); } catch (e) { list = []; }
-    for (const el of list) {
-        if (out.size >= MAX) return out;
-        if (panel && panel.contains(el)) continue;
-        if (isBold(el)) continue;
-        const t = (el.textContent || '').trim();
-        if (!t) continue;
-        const r = el.getBoundingClientRect();
-        if (r.width < 20 || r.height < 8) continue;
-        let s; try { s = getComputedStyle(el); } catch (e) { continue; }
-        if (s.display === 'none' || s.visibility === 'hidden') continue;
-        out.add(resolveTarget(el));
+        try { list = document.querySelectorAll('.text-too-long'); } catch (e) { list = []; }
+        for (const el of list) {
+            if (out.size >= MAX) return out;
+            if (panel && panel.contains(el)) continue;
+            if (isBold(el)) continue;
+            const t = (el.textContent || '').trim();
+            if (!t) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 20 || r.height < 8) continue;
+            let s; try { s = getComputedStyle(el); } catch (e) { continue; }
+            if (s.display === 'none' || s.visibility === 'hidden') continue;
+            out.add(resolveTarget(el));
+        }
+        return out;
     }
-    return out;
-}
     async function autoPick() {
         if (picking) return;
         picking = true;
         clearSelected();
-        leftNavEl = null; leftNavTime = 0;
         setStatus('🔍 正在选择…', 'running');
         try {
             await sleep(200);
@@ -707,7 +691,6 @@
         setStatus('📂 检测到章节列表页', 'running');
         addLog('📂 进入章节列表处理流程', 'ok');
 
-        // 1. 判断当前是折叠还是展开态
         if (findExpandAllButton()) {
             addLog('✅ 发现「全部展开」，点击它', 'ok');
             clickExpandAll();
@@ -720,10 +703,8 @@
             addLog('⚠️ 未识别到展开/收起按钮', 'err');
         }
 
-        // 2. 等 DOM 渲染
         await sleep(1500);
 
-        // 3. 找第一个可点条目
         const entry = findFirstEntry();
         if (!entry) {
             setStatus('⚠️ 未找到可点击条目', 'err');
@@ -738,12 +719,10 @@
         addLog(`👉 即将进入：${label}`, 'ok');
         setStatus(`📂 正在进入：${label}`, 'running');
 
-        // 4. 点击
         const oldUrl = location.href;
         try { realClick(pickClick(entry) || entry); }
         catch (e) { reportErr('点击条目失败', e, false); }
 
-        // 5. 等跳转
         await sleep(2000);
         if (location.href !== oldUrl) {
             addLog('🔄 SPA 跳转成功，2.5 秒后续跑', 'ok');
@@ -817,16 +796,13 @@
 
         await sleep(800);
 
-        // ★ 分支 C：学习活动页 → 直接刷课
         if (isLearningActivityPage()) {
             addLog('✅ 学习活动页，直接开始刷课', 'ok');
         }
-        // ★ 分支 A/B：章节列表页 → 展开 + 点第一个条目
         else if (isChapterListPage()) {
             await autoEnterFirstLesson();
             return;
         }
-        // 其他页面：按原逻辑
 
         if (!selectedEls.length && !authorized) {
             setStatus('请先手动选择元素，或授权后自动处理', '');
@@ -892,6 +868,61 @@
         if (!text) { setStatus('暂无日志可导出', ''); return; }
         try { await navigator.clipboard.writeText(text); setStatus(`📋 日志已复制（${logEntries.length} 条）`, 'ok'); addLog('📋 日志已复制到剪贴板', 'ok'); }
         catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); setStatus('📋 日志已复制', 'ok'); } catch (err) { setStatus('❌ 复制失败', ''); } document.body.removeChild(ta); }
+    }
+
+    /* ===== 门户页提示弹窗（右上角） ===== */
+    function showPortalTip() {
+        if (document.getElementById('qcc-portal-tip')) return;
+        const tip = document.createElement('div');
+        tip.id = 'qcc-portal-tip';
+        tip.innerHTML = `
+            <div class="qcc-tip-header">
+                <span class="qcc-tip-icon">⚡</span>
+                <span class="qcc-tip-title">国开自动刷课 · 操作指引</span>
+                <button class="qcc-tip-close" id="qcc-tip-close" title="关闭">×</button>
+            </div>
+            <div class="qcc-tip-body">
+                <div class="qcc-tip-step">
+                    <span class="qcc-tip-num">1</span>
+                    <span class="qcc-tip-text">选择你要学习的课程</span>
+                </div>
+                <div class="qcc-tip-step">
+                    <span class="qcc-tip-num">2</span>
+                    <span class="qcc-tip-text">点【去学习】进入课程页面</span>
+                </div>
+                <div class="qcc-tip-step">
+                    <span class="qcc-tip-num">3</span>
+                    <span class="qcc-tip-text">在课程页面点【▶ 开始】</span>
+                </div>
+                <div class="qcc-tip-footer">✨ 之后就可以自动学习了</div>
+            </div>
+        `;
+        const s = document.createElement('style');
+        s.textContent = `
+#qcc-portal-tip{position:fixed;right:20px;top:100px;width:280px;background:rgba(255,255,255,.95);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.22),0 8px 24px rgba(15,23,42,.12),0 0 0 .5px rgba(15,23,42,.08);z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#1d1d1f;font-size:13px;box-sizing:border-box;overflow:hidden;animation:qccTipIn .35s cubic-bezier(.2,1.2,.4,1)}
+@keyframes qccTipIn{from{opacity:0;transform:translateX(20px) scale(.94)}to{opacity:1;transform:translateX(0) scale(1)}}
+#qcc-portal-tip *{box-sizing:border-box}
+.qcc-tip-header{display:flex;align-items:center;gap:6px;padding:11px 14px;background:linear-gradient(135deg,#6EBBCE 0%,#4f9db8 100%);color:#fff;font-weight:600}
+.qcc-tip-icon{font-size:16px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.2))}
+.qcc-tip-title{font-size:12.5px;flex:1;letter-spacing:.02em}
+.qcc-tip-close{width:22px;height:22px;border:0;background:rgba(255,255,255,.22);color:#fff;border-radius:50%;cursor:pointer;font-size:15px;line-height:1;display:inline-flex;align-items:center;justify-content:center;transition:all .18s;padding:0}
+.qcc-tip-close:hover{background:rgba(255,59,48,.75)}
+.qcc-tip-body{padding:14px}
+.qcc-tip-step{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:.5px dashed rgba(15,23,42,.08)}
+.qcc-tip-step:last-of-type{border-bottom:0}
+.qcc-tip-num{flex:0 0 20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:linear-gradient(180deg,#34d17a 0%,#12b76a 100%);color:#fff;font-size:11px;font-weight:700;box-shadow:0 2px 6px rgba(18,183,106,.3)}
+.qcc-tip-text{flex:1;font-size:12px;color:#3a3a3c;line-height:1.55;padding-top:1px}
+.qcc-tip-footer{margin-top:10px;padding:9px 12px;background:linear-gradient(135deg,rgba(52,209,122,.12) 0%,rgba(18,183,106,.12) 100%);border-radius:9px;font-size:11.5px;font-weight:600;color:#0e8f52;text-align:center;letter-spacing:.01em}
+`;
+        document.head.appendChild(s);
+        document.body.appendChild(tip);
+
+        document.getElementById('qcc-tip-close').addEventListener('click', () => {
+            tip.style.transition = 'opacity .2s, transform .2s';
+            tip.style.opacity = '0';
+            tip.style.transform = 'translateX(10px) scale(.94)';
+            setTimeout(() => tip.remove(), 200);
+        });
     }
 
     /* ===== 授权弹窗 ===== */
@@ -977,7 +1008,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v5.4.0</span>
+                    <span class="qcc-badge">v5.4.2</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
@@ -1347,7 +1378,7 @@
             if (syncAuthUI) try { syncAuthUI(); } catch (e) {}
             setStatus(authorized ? '✅ 已授权，点开始自动运行' : (authCode ? '⚠️ 上次验证未通过' : '等待操作'), '');
 
-            // ★ 页面刷新后检测续跑标志
+            // 页面刷新后检测续跑标志
             if (authorized && getResume()) {
                 addLog('🔄 检测到续跑标志，2.5 秒后自动开始', 'ok');
                 await sleep(2500);
@@ -1358,7 +1389,15 @@
     }
 
     function safeBuild() {
-        try { if (!document.body) { setTimeout(safeBuild, 50); return; } buildPanel(); }
+        try {
+            if (!document.body) { setTimeout(safeBuild, 50); return; }
+            // ★ 门户页 → 只显示提示，不加载面板
+            if (location.hostname === 'menhu.pt.ouchn.cn') {
+                showPortalTip();
+                return;
+            }
+            buildPanel();
+        }
         catch (e) { reportErr('面板构建失败', e, false); }
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', safeBuild, { once: true });
