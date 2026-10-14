@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         新国开/国开/国家开放大学自动刷课+次数和时长（试用卡版）
 // @namespace    https://scriptcat.org/
-// @version      5.4.2
+// @version      5.4.3
 // @description 新国开｜国开｜国家开放大学｜浅色/深色主题｜点击绿框保持｜授权后全自动展开→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活｜门户页操作指引
 // @author       You
 // @match        *://lms.ouchn.cn/*
@@ -651,6 +651,8 @@
         });
     }
     async function playVideo(video) {
+        // ★ 保险：非授权不接管视频，直接返回
+        if (!authorized) return false;
         await waitMeta(video, 8000);
         const fr = () => { try { if (video.playbackRate !== videoSpeed) video.playbackRate = videoSpeed; if (video.defaultPlaybackRate !== videoSpeed) video.defaultPlaybackRate = videoSpeed; } catch (e) {} };
         const fm = () => { try { if (!video.muted) video.muted = true; if (video.volume !== 0) video.volume = 0; } catch (e) {} };
@@ -763,7 +765,8 @@
         setStatus(`执行中… [${label}] 已点击 ${clickedTotal} 次`, 'running');
         addLog(`👆 第 ${clickedTotal} 次：${label}`, '');
         updateStats();
-        if (!autoPlayVideo) return;
+        // ★ 非授权 或 未开启自动播放：不接管视频（保持“有视频不播放、1倍速”的默认行为）
+        if (!authorized || !autoPlayVideo) return;
         const video = await waitNewVideo(oldKeys, V_WAIT);
         if (!video) { addLog('⏳ 未检测到新视频（跳过）', ''); return; }
         processingVideo = true; updateRunButtons();
@@ -845,7 +848,7 @@
         runStats.start = Date.now(); runStats.vCount = 0; runStats.vSec = 0; runStats.last = 0;
         updateStats(); enableKA(); updateRunButtons();
         setStatus('开始执行…（随机间隔 2~12 秒）', 'running');
-        addLog(`▶ 正式开始（${selectedEls.length} 个元素，${autoPlayVideo ? videoSpeed + 'x 自动播放' : '⚠ 未开启自动播放'}）`, autoPlayVideo ? 'ok' : 'err');
+        addLog(`▶ 正式开始（${selectedEls.length} 个元素，${authorized && autoPlayVideo ? videoSpeed + 'x 自动播放' : '⚠ 未开启自动播放'}）`, authorized && autoPlayVideo ? 'ok' : 'err');
         mainLoop();
     }
     function pauseClicking() { if (!isRunning || isPaused) return; isPaused = true; setStatus('⏸ 已暂停', ''); addLog('⏸ 已暂停', ''); updateRunButtons(); }
@@ -1008,7 +1011,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v5.4.2</span>
+                    <span class="qcc-badge">v5.4.3</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
@@ -1276,19 +1279,29 @@
             const aL = document.getElementById('qcc-auto-video-label');
             const aTip = document.getElementById('qcc-auth-tip');
             if (authorized) {
-                if (avEl) avEl.disabled = false;
-                if (mcEl) mcEl.disabled = false;
+                // ★ 授权后：从本地配置恢复用户之前的偏好（含自动播放开关与倍速）
+                loadCfg();
+                if (avEl) { avEl.disabled = false; avEl.checked = autoPlayVideo; }
+                if (mcEl) { mcEl.disabled = false; mcEl.value = String(maxClicks || 0); }
                 if (aL) aL.textContent = '自动播放';
                 if (sBlk) sBlk.classList.toggle('qcc-hidden', !autoPlayVideo);
                 if (eT) eT.innerHTML = '▶️ 执行 · 点→开始→ [全自动开始你的学习]';
                 if (aTip) aTip.style.display = 'none';
+                // 同步倍速按钮显示
+                if (sv) sv.textContent = videoSpeed + 'x';
+                speedBtns.forEach(b => b.classList.toggle('active', parseInt(b.dataset.speed, 10) === videoSpeed));
             } else {
+                // ★ 非授权：强制重置为“不自动播放 + 1 倍速”，防止 localStorage 旧配置残留
+                autoPlayVideo = false;
+                videoSpeed = 1;
                 if (avEl) { avEl.checked = false; avEl.disabled = true; }
                 if (mcEl) { mcEl.value = '0'; mcEl.disabled = true; maxClicks = 0; }
                 if (aL) aL.textContent = '自动播放 🔒';
                 if (sBlk) sBlk.classList.add('qcc-hidden');
                 if (eT) eT.innerHTML = '▶️ 执行 · 手动模式';
                 if (aTip) aTip.style.display = '';
+                if (sv) sv.textContent = '1x';
+                speedBtns.forEach(b => b.classList.remove('active'));
             }
             updateAuthTime();
             if (authorized && manualPicking) exitPick(false);
