@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         新国开/国开/国家开放大学自动刷课+次数和时长（试用卡版）
 // @namespace    https://scriptcat.org/
-// @version      5.4.3
-// @description 新国开｜国开｜国家开放大学｜浅色/深色主题｜点击绿框保持｜授权后全自动展开→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活｜门户页操作指引
+// @version      5.4.9
+// @description  新国开｜国开｜国家开放大学｜浅色/深色主题｜点击绿框保持｜授权后全自动展开→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活｜门户页操作指引
 // @author       You
 // @match        *://lms.ouchn.cn/*
 // @match        *://menhu.pt.ouchn.cn/*
@@ -36,6 +36,30 @@
     let heartbeatTimer = null, hbFail = 0;
     let syncAuthUI = null;
     let isDarkTheme = false;
+
+    // ★ 顶级防切屏和焦点丢失拦截（必须写在最外层，最早期接管）
+    let isRunning = false;
+    const fakeFocus = () => {
+        if (!isRunning) return;
+        try {
+            Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+            Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+            Object.defineProperty(document, 'hasFocus', { configurable: true, get: () => true });
+        } catch (e) {}
+    };
+    window.addEventListener('blur', e => {
+        if (isRunning) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            fakeFocus();
+        }
+    }, true);
+    document.addEventListener('visibilitychange', e => {
+        if (isRunning) {
+            e.stopImmediatePropagation();
+            fakeFocus();
+        }
+    }, true);
 
     const DEVICE_ID = (() => {
         try {
@@ -308,10 +332,7 @@
     const vMeta = new WeakMap();
     function patchVisibility() {
         if (visPatched) return; visPatched = true;
-        try {
-            Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
-            Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
-        } catch (e) {}
+        fakeFocus();
     }
     function patchPause() {
         if (window.__QCC_PAUSE__) return;
@@ -334,6 +355,14 @@
                 if (m && !m.giveUp && !this.ended) return;
                 return cur.call(this);
             };
+            // 终极接管 paused 属性
+            Object.defineProperty(HTMLMediaElement.prototype, 'paused', {
+                get: function() {
+                    if (isRunning && this.tagName === 'VIDEO') return false;
+                    return Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'paused').get.call(this);
+                },
+                configurable: true
+            });
         } catch (e) {}
     }
     function markVideos() {
@@ -369,7 +398,7 @@
 
     /* ===== 全局状态 ===== */
     let panel, statusEl, statusTextEl, listCountEl;
-    let selectedEls = [], isRunning = false, isPaused = false;
+    let selectedEls = [], isPaused = false;
     let clickTimer = null, clickIndex = 0, clickedTotal = 0, maxClicks = 0;
     let expanding = false, picking = false, processingVideo = false, preparing = false;
     let currentClickingEl = null, clickHighlightTimer = null;
@@ -650,38 +679,115 @@
             v.addEventListener('loadedmetadata', on, { once: true });
         });
     }
+    
+    // ★ 终极播放器激活逻辑（恢复真实的倍速和静音）
     async function playVideo(video) {
-        // ★ 保险：非授权不接管视频，直接返回
         if (!authorized) return false;
         await waitMeta(video, 8000);
-        const fr = () => { try { if (video.playbackRate !== videoSpeed) video.playbackRate = videoSpeed; if (video.defaultPlaybackRate !== videoSpeed) video.defaultPlaybackRate = videoSpeed; } catch (e) {} };
-        const fm = () => { try { if (!video.muted) video.muted = true; if (video.volume !== 0) video.volume = 0; } catch (e) {} };
-        const onPause = () => { if (!isRunning) return; setTimeout(() => { if (video.paused && video.isConnected && isRunning) video.play().catch(() => {}); }, 200); };
-        const onRC = () => { if (video.playbackRate !== videoSpeed) fr(); };
+        
+        const realSpeed = videoSpeed;
+        const fr = () => { try { if (video.playbackRate !== realSpeed) video.playbackRate = realSpeed; } catch (e) {} };
+        
+        // 恢复强制静音
+        const fm = () => { try { video.muted = true; video.volume = 0; } catch (e) {} };
+        
+        // ★ 核心破解1：模拟空格键
+        const pressSpace = () => {
+            try {
+                const ev = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: 32, bubbles: true, cancelable: true });
+                video.dispatchEvent(ev);
+                document.body.dispatchEvent(ev);
+            } catch (e) {}
+        };
+
+        // ★ 核心破解2：坐标物理点击
+        const forceClickUI = () => {
+            try {
+                const r = video.getBoundingClientRect();
+                const blEl = document.elementFromPoint(r.left + 30, r.bottom - 20);
+                if (blEl) realClick(blEl);
+                realClick(video); 
+                if (video.parentElement) realClick(video.parentElement);
+            } catch (e) {}
+        };
+
+        // 进场三连击
+        pressSpace();
+        forceClickUI();
+        await sleep(500);
+        
+        const onPause = () => { 
+            if (!isRunning) return; 
+            setTimeout(() => { 
+                if (video.paused && video.isConnected && isRunning) { 
+                    addLog('⚠️ 播放器被强行暂停，尝试唤醒...', 'err');
+                    pressSpace();
+                    forceClickUI();
+                    video.play().catch(() => {}); 
+                } 
+            }, 200); 
+        };
+        
+        const onRC = () => { if (video.playbackRate !== realSpeed) fr(); };
         const onVC = () => fm();
         let watched = 0, lastCT = 0;
         const onTU = () => { const ct = video.currentTime || 0; const d = ct - lastCT; if (d > 0 && d < 2) watched += d; lastCT = ct; };
+        
         video.addEventListener('ratechange', onRC);
         video.addEventListener('pause', onPause);
         video.addEventListener('volumechange', onVC);
         video.addEventListener('timeupdate', onTU);
+        
         const rt = setInterval(fr, 500);
-        const kt = setInterval(() => { if (!isRunning) return; try { if (video.paused && !video.ended && video.isConnected) video.play().catch(() => {}); fm(); fr(); } catch (e) {} }, 2000);
+        
+        const kt = setInterval(() => { 
+            if (!isRunning) return; 
+            try { 
+                if (video.paused && !video.ended && video.isConnected) { 
+                    pressSpace();
+                    forceClickUI();
+                    video.play().catch(() => {}); 
+                } 
+                fm(); fr(); 
+            } catch (e) {} 
+        }, 2000);
+        
         const cleanup = () => { video.removeEventListener('ratechange', onRC); video.removeEventListener('pause', onPause); video.removeEventListener('volumechange', onVC); video.removeEventListener('timeupdate', onTU); clearInterval(rt); clearInterval(kt); };
-        try { video.muted = true; video.volume = 0; fr(); try { video.currentTime = 0; } catch (e) {} await video.play(); fr(); try { video.currentTime = 0; } catch (e) {} }
-        catch (e) { reportErr('视频 play() 失败', e, true); cleanup(); return false; }
+        
+        try { 
+            fm(); 
+            fr(); 
+            await video.play(); 
+        }
+        catch (e) { 
+            pressSpace();
+            forceClickUI();
+            await sleep(500);
+            try { await video.play(); } catch (e2) { reportErr('视频 play() 被拒绝', e2, true); }
+        }
+        
         await new Promise(res => {
             let last = -1, stuck = 0;
             const st = Date.now();
             const check = () => {
                 if (!video.isConnected || video.ended) return res();
+                
+                if (!window.__QCC_LAST_MOUSE || Date.now() - window.__QCC_LAST_MOUSE > 10000) {
+                    window.__QCC_LAST_MOUSE = Date.now();
+                    try {
+                        window.focus();
+                        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 300 + Math.random() * 50, clientY: 300 + Math.random() * 50 }));
+                    } catch(e){}
+                }
+
                 const ct = video.currentTime || 0, d = video.duration || 0;
-                if (d > 0 && isFinite(d) && ct >= d - 0.3) return res();
+                if (d > 0 && isFinite(d) && ct >= d - 0.5) return res();
                 if (Date.now() - st > V_GRACE) { if (ct > 0 && Math.abs(ct - last) < 0.05) { stuck++; if (stuck > V_STUCK) return res(); } else stuck = 0; }
                 last = ct; fr(); fm(); setTimeout(check, 500);
             };
             check();
         });
+        
         cleanup();
         try { recVideo(video, watched); } catch (e) {}
         return true;
@@ -765,7 +871,6 @@
         setStatus(`执行中… [${label}] 已点击 ${clickedTotal} 次`, 'running');
         addLog(`👆 第 ${clickedTotal} 次：${label}`, '');
         updateStats();
-        // ★ 非授权 或 未开启自动播放：不接管视频（保持“有视频不播放、1倍速”的默认行为）
         if (!authorized || !autoPlayVideo) return;
         const video = await waitNewVideo(oldKeys, V_WAIT);
         if (!video) { addLog('⏳ 未检测到新视频（跳过）', ''); return; }
@@ -1011,7 +1116,7 @@
                     <span class="qcc-logo">⚡</span>
                     <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
                     <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v5.4.3</span>
+                    <span class="qcc-badge">v5.4.9</span>
                 </div>
                 <div class="qcc-header-right">
                     <button class="qcc-icon-btn" id="qcc-min">−</button>
@@ -1279,7 +1384,6 @@
             const aL = document.getElementById('qcc-auto-video-label');
             const aTip = document.getElementById('qcc-auth-tip');
             if (authorized) {
-                // ★ 授权后：从本地配置恢复用户之前的偏好（含自动播放开关与倍速）
                 loadCfg();
                 if (avEl) { avEl.disabled = false; avEl.checked = autoPlayVideo; }
                 if (mcEl) { mcEl.disabled = false; mcEl.value = String(maxClicks || 0); }
@@ -1287,11 +1391,9 @@
                 if (sBlk) sBlk.classList.toggle('qcc-hidden', !autoPlayVideo);
                 if (eT) eT.innerHTML = '▶️ 执行 · 点→开始→ [全自动开始你的学习]';
                 if (aTip) aTip.style.display = 'none';
-                // 同步倍速按钮显示
                 if (sv) sv.textContent = videoSpeed + 'x';
                 speedBtns.forEach(b => b.classList.toggle('active', parseInt(b.dataset.speed, 10) === videoSpeed));
             } else {
-                // ★ 非授权：强制重置为“不自动播放 + 1 倍速”，防止 localStorage 旧配置残留
                 autoPlayVideo = false;
                 videoSpeed = 1;
                 if (avEl) { avEl.checked = false; avEl.disabled = true; }
