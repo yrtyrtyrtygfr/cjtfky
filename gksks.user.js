@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         新国开/国开/国家开放大学自动刷课+次数和时长（试用卡版）
 // @namespace    https://scriptcat.org/
-// @version      5.4.9
+// @version      5.5.0
 // @description  新国开｜国开｜国家开放大学｜浅色/深色主题｜点击绿框保持｜授权后全自动展开→选择→点击｜暂停继续｜2/4/6/8/10倍速｜10分钟保活｜门户页操作指引
 // @author       You
 // @match        *://lms.ouchn.cn/*
@@ -22,7 +22,8 @@
     const SERVER = 'https://aitwo.icu';
     const HB_MS = 50000, HB_FAIL = 3;
     const RAND_MIN = 2, RAND_MAX = 12;
-    const V_WAIT = 20000, V_POLL = 800;
+    // ★ 修改1：把等待视频的超时时间从 20 秒缩短到 8 秒，防止空等太久
+    const V_WAIT = 3000, V_POLL = 800; 
     const EXPAND_LIMIT = 5800, EXPAND_LOOPS = 50, EXPAND_GAP = 25, EXPAND_LOOP_GAP = 100, EXPAND_ROUND_GAP = 2000;
     const LOG_MAX = 80;
     const SPEEDS = [2, 4, 6, 8, 10];
@@ -37,7 +38,6 @@
     let syncAuthUI = null;
     let isDarkTheme = false;
 
-    // ★ 顶级防切屏和焦点丢失拦截（必须写在最外层，最早期接管）
     let isRunning = false;
     const fakeFocus = () => {
         if (!isRunning) return;
@@ -48,17 +48,10 @@
         } catch (e) {}
     };
     window.addEventListener('blur', e => {
-        if (isRunning) {
-            e.stopImmediatePropagation();
-            e.preventDefault();
-            fakeFocus();
-        }
+        if (isRunning) { e.stopImmediatePropagation(); e.preventDefault(); fakeFocus(); }
     }, true);
     document.addEventListener('visibilitychange', e => {
-        if (isRunning) {
-            e.stopImmediatePropagation();
-            fakeFocus();
-        }
+        if (isRunning) { e.stopImmediatePropagation(); fakeFocus(); }
     }, true);
 
     const DEVICE_ID = (() => {
@@ -261,10 +254,8 @@
     }
     const saveCfg = () => { try { localStorage.setItem(K.CFG, JSON.stringify({ autoPlayVideo, videoSpeed, maxClicks })); } catch (e) {} };
 
-    /* ===== Shadow DOM（简化） ===== */
     function getAllRoots() { return [document]; }
 
-    /* ===== 通用工具 ===== */
     const reportErr = (tag, err, log) => { console.warn(`[QCC] ${tag}:`, err); if (log) addLog(`⚠️ ${tag}：${(err && err.message) || err}`, 'err'); };
     function realClick(el) {
         if (!el) return false;
@@ -295,7 +286,6 @@
     };
     const randDelay = () => Math.round((Math.random() * (RAND_MAX - RAND_MIN) + RAND_MIN) * 1000);
 
-    /* ===== Worker ===== */
     const workerSrc = `let t=null;self.onmessage=e=>{if(e.data.cmd==='start'){if(t)clearInterval(t);t=setInterval(()=>self.postMessage({tick:1}),e.data.ms||1000);}else if(e.data.cmd==='stop'){if(t){clearInterval(t);t=null;}}};`;
     let worker = null;
     const getWorker = () => {
@@ -330,10 +320,7 @@
     let keepAudio = null, wakeLock = null, visPatched = false, pauseHardPatched = false;
     let superTimer = null, markerTimer = null, recoverCount = 0;
     const vMeta = new WeakMap();
-    function patchVisibility() {
-        if (visPatched) return; visPatched = true;
-        fakeFocus();
-    }
+    function patchVisibility() { if (visPatched) return; visPatched = true; fakeFocus(); }
     function patchPause() {
         if (window.__QCC_PAUSE__) return;
         window.__QCC_PAUSE__ = true;
@@ -355,7 +342,6 @@
                 if (m && !m.giveUp && !this.ended) return;
                 return cur.call(this);
             };
-            // 终极接管 paused 属性
             Object.defineProperty(HTMLMediaElement.prototype, 'paused', {
                 get: function() {
                     if (isRunning && this.tagName === 'VIDEO') return false;
@@ -365,9 +351,7 @@
             });
         } catch (e) {}
     }
-    function markVideos() {
-        try { document.querySelectorAll('video').forEach(v => { if (!vMeta.has(v)) vMeta.set(v, { last: 0, stuck: 0, giveUp: false }); }); } catch (e) {}
-    }
+    function markVideos() { try { document.querySelectorAll('video').forEach(v => { if (!vMeta.has(v)) vMeta.set(v, { last: 0, stuck: 0, giveUp: false }); }); } catch (e) {} }
     function startSuperKA() {
         if (superTimer) return;
         patchPauseHard(); markVideos(); recoverCount = 0;
@@ -405,7 +389,6 @@
     const clickCountMap = new WeakMap();
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    /* ===== 缩放 ===== */
     function calcScale() { const w = innerWidth, h = innerHeight; let s = w >= 3600 ? 1.40 : w >= 2800 ? 1.25 : w >= 2200 ? 1.10 : w >= 1920 ? 1.00 : w >= 1600 ? 0.92 : w >= 1400 ? 0.85 : w >= 1200 ? 0.78 : 0.72; if (h < 720 && s > 0.9) s = 0.9; if (h < 600 && s > 0.8) s = 0.8; return s * UI_SCALE; }
     function applyScale() { if (!panel) return; const s = calcScale(); if ('zoom' in panel.style) panel.style.zoom = s; else { panel.style.transformOrigin = 'top right'; panel.style.transform = `scale(${s})`; } }
 
@@ -477,7 +460,6 @@
         at.className = 'qcc-auth-time' + (info.cls ? ' ' + info.cls : '');
     }
 
-    /* ===== UI 状态 ===== */
     function setStatus(text, cls) { if (!statusTextEl) return; statusTextEl.textContent = text; statusEl.className = 'qcc-status' + (cls ? ' ' + cls : ''); }
     function getElText(el) { if (!el) return '未知元素'; const t = (el.textContent || '').trim().replace(/\s+/g, ' '); return t ? (t.length > 30 ? t.slice(0, 30) + '…' : t) : `[${(el.tagName || 'el').toLowerCase()}]`; }
     function renderList() { if (!listCountEl) return; listCountEl.textContent = selectedEls.length + '个'; }
@@ -490,7 +472,6 @@
         if (b3) { b3.disabled = !isRunning || preparing; b3.innerHTML = isPaused ? '<span class="qcc-btn-icon">▶</span> 继续' : '<span class="qcc-btn-icon">⏸</span> 暂停'; }
     }
 
-    /* ===== 手动选择 ===== */
     let manualPicking = false, hoverEl = null, overH = null, clickH = null;
     function pickTarget(el) {
         if (!el || el.nodeType !== 1 || (panel && panel.contains(el))) return null;
@@ -537,7 +518,6 @@
         else setStatus(selectedEls.length > 0 ? `已退出选择，保留 ${selectedEls.length} 个元素` : '已退出选择', '');
     }
 
-    /* ===== 展开 ===== */
     async function expandAll() {
         if (expanding) return;
         expanding = true;
@@ -577,7 +557,6 @@
         } finally { expanding = false; }
     }
 
-    /* ===== 自动选择 ===== */
     function resolveTarget(el) {
         let c = el;
         for (let i = 0; i < 4 && c; i++) {
@@ -592,7 +571,6 @@
     function collect() {
         const out = new Set();
         const MAX = 300;
-
         let list;
         try { list = document.querySelectorAll('a.title, .activity-title a, .activity-header a'); } catch (e) { list = []; }
         for (const el of list) {
@@ -609,7 +587,6 @@
             out.add(el);
         }
         if (out.size) return out;
-
         try { list = document.querySelectorAll('.text-too-long'); } catch (e) { list = []; }
         for (const el of list) {
             if (out.size >= MAX) return out;
@@ -646,7 +623,6 @@
         } finally { picking = false; }
     }
 
-    /* ===== 视频 ===== */
     let autoPlayVideo = false, videoSpeed = 2;
     function allVideos() {
         const out = [], seen = new Set();
@@ -679,28 +655,14 @@
             v.addEventListener('loadedmetadata', on, { once: true });
         });
     }
-    
-    // ★ 终极播放器激活逻辑（恢复真实的倍速和静音）
+
     async function playVideo(video) {
         if (!authorized) return false;
         await waitMeta(video, 8000);
-        
         const realSpeed = videoSpeed;
         const fr = () => { try { if (video.playbackRate !== realSpeed) video.playbackRate = realSpeed; } catch (e) {} };
-        
-        // 恢复强制静音
         const fm = () => { try { video.muted = true; video.volume = 0; } catch (e) {} };
-        
-        // ★ 核心破解1：模拟空格键
-        const pressSpace = () => {
-            try {
-                const ev = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: 32, bubbles: true, cancelable: true });
-                video.dispatchEvent(ev);
-                document.body.dispatchEvent(ev);
-            } catch (e) {}
-        };
-
-        // ★ 核心破解2：坐标物理点击
+        const pressSpace = () => { try { const ev = new KeyboardEvent('keydown', { key: ' ', code: 'Space', keyCode: 32, bubbles: true, cancelable: true }); video.dispatchEvent(ev); document.body.dispatchEvent(ev); } catch (e) {} };
         const forceClickUI = () => {
             try {
                 const r = video.getBoundingClientRect();
@@ -710,8 +672,6 @@
                 if (video.parentElement) realClick(video.parentElement);
             } catch (e) {}
         };
-
-        // 进场三连击
         pressSpace();
         forceClickUI();
         await sleep(500);
@@ -727,59 +687,31 @@
                 } 
             }, 200); 
         };
-        
         const onRC = () => { if (video.playbackRate !== realSpeed) fr(); };
         const onVC = () => fm();
         let watched = 0, lastCT = 0;
         const onTU = () => { const ct = video.currentTime || 0; const d = ct - lastCT; if (d > 0 && d < 2) watched += d; lastCT = ct; };
-        
         video.addEventListener('ratechange', onRC);
         video.addEventListener('pause', onPause);
         video.addEventListener('volumechange', onVC);
         video.addEventListener('timeupdate', onTU);
-        
         const rt = setInterval(fr, 500);
-        
         const kt = setInterval(() => { 
             if (!isRunning) return; 
-            try { 
-                if (video.paused && !video.ended && video.isConnected) { 
-                    pressSpace();
-                    forceClickUI();
-                    video.play().catch(() => {}); 
-                } 
-                fm(); fr(); 
-            } catch (e) {} 
+            try { if (video.paused && !video.ended && video.isConnected) { pressSpace(); forceClickUI(); video.play().catch(() => {}); } fm(); fr(); } catch (e) {} 
         }, 2000);
-        
         const cleanup = () => { video.removeEventListener('ratechange', onRC); video.removeEventListener('pause', onPause); video.removeEventListener('volumechange', onVC); video.removeEventListener('timeupdate', onTU); clearInterval(rt); clearInterval(kt); };
-        
-        try { 
-            fm(); 
-            fr(); 
-            await video.play(); 
-        }
-        catch (e) { 
-            pressSpace();
-            forceClickUI();
-            await sleep(500);
-            try { await video.play(); } catch (e2) { reportErr('视频 play() 被拒绝', e2, true); }
-        }
-        
+        try { fm(); fr(); await video.play(); }
+        catch (e) { pressSpace(); forceClickUI(); await sleep(500); try { await video.play(); } catch (e2) { reportErr('视频 play() 被拒绝', e2, true); } }
         await new Promise(res => {
             let last = -1, stuck = 0;
             const st = Date.now();
             const check = () => {
                 if (!video.isConnected || video.ended) return res();
-                
                 if (!window.__QCC_LAST_MOUSE || Date.now() - window.__QCC_LAST_MOUSE > 10000) {
                     window.__QCC_LAST_MOUSE = Date.now();
-                    try {
-                        window.focus();
-                        document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 300 + Math.random() * 50, clientY: 300 + Math.random() * 50 }));
-                    } catch(e){}
+                    try { window.focus(); document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 300 + Math.random() * 50, clientY: 300 + Math.random() * 50 })); } catch(e){}
                 }
-
                 const ct = video.currentTime || 0, d = video.duration || 0;
                 if (d > 0 && isFinite(d) && ct >= d - 0.5) return res();
                 if (Date.now() - st > V_GRACE) { if (ct > 0 && Math.abs(ct - last) < 0.05) { stuck++; if (stuck > V_STUCK) return res(); } else stuck = 0; }
@@ -787,18 +719,15 @@
             };
             check();
         });
-        
         cleanup();
         try { recVideo(video, watched); } catch (e) {}
         return true;
     }
 
-    /* ===== 章节列表页：进入第一个学习条目 ===== */
     async function autoEnterFirstLesson() {
         setResume();
         setStatus('📂 检测到章节列表页', 'running');
         addLog('📂 进入章节列表处理流程', 'ok');
-
         if (findExpandAllButton()) {
             addLog('✅ 发现「全部展开」，点击它', 'ok');
             clickExpandAll();
@@ -810,41 +739,29 @@
         } else {
             addLog('⚠️ 未识别到展开/收起按钮', 'err');
         }
-
         await sleep(1500);
-
         const entry = findFirstEntry();
         if (!entry) {
             setStatus('⚠️ 未找到可点击条目', 'err');
             addLog('⚠️ 未找到可点击条目，终止', 'err');
-            clearResume();
-            isRunning = false; preparing = false;
-            updateRunButtons();
-            return;
+            clearResume(); isRunning = false; preparing = false; updateRunButtons(); return;
         }
-
         const label = (entry.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30) || '[未命名]';
         addLog(`👉 即将进入：${label}`, 'ok');
         setStatus(`📂 正在进入：${label}`, 'running');
-
         const oldUrl = location.href;
-        try { realClick(pickClick(entry) || entry); }
-        catch (e) { reportErr('点击条目失败', e, false); }
-
+        try { realClick(pickClick(entry) || entry); } catch (e) { reportErr('点击条目失败', e, false); }
         await sleep(2000);
         if (location.href !== oldUrl) {
             addLog('🔄 SPA 跳转成功，2.5 秒后续跑', 'ok');
             await sleep(2500);
-            clearResume();
-            isRunning = false; preparing = false;
-            selectedEls = []; renderList();
+            clearResume(); isRunning = false; preparing = false; selectedEls = []; renderList();
             startClicking();
         } else {
             addLog('⏳ 等待页面刷新后自动续跑', 'ok');
         }
     }
 
-    /* ===== 主循环 ===== */
     function highlightClick(el) {
         try { document.querySelectorAll('.qcc-clicking').forEach(x => x.classList.remove('qcc-clicking')); } catch (e) {}
         try { el.classList.add('qcc-clicking'); } catch (e) {}
@@ -855,25 +772,32 @@
             try { if (currentClickingEl.isConnected && !currentClickingEl.classList.contains('qcc-clicking')) currentClickingEl.classList.add('qcc-clicking'); } catch (e) {}
         }, 400);
     }
+
     async function doClick() {
         if (!isRunning || processingVideo) return;
         if (!selectedEls.length) { stopClicking(); setStatus('没有可点击的元素', ''); return; }
         selectedEls = selectedEls.filter(el => el.isConnected);
         if (!selectedEls.length) { stopClicking(); setStatus('所有元素已从页面移除', ''); renderList(); return; }
         if (maxClicks > 0 && clickedTotal >= maxClicks) { setStatus(`✅ 已达最大点击次数 ${maxClicks}`, 'ok'); addLog(`✅ 已达最大点击次数 ${maxClicks}`, 'ok'); stopClicking(); return; }
+        
         const el = selectedEls[clickIndex % selectedEls.length];
         const oldKeys = snapVKeys();
         const label = getElText(el);
         try { realClick(pickClick(el) || el); highlightClick(el); } catch (e) {}
+        
         clickedTotal++; clickIndex++;
         clickCountMap.set(el, (clickCountMap.get(el) || 0) + 1);
         renderList();
         setStatus(`执行中… [${label}] 已点击 ${clickedTotal} 次`, 'running');
         addLog(`👆 第 ${clickedTotal} 次：${label}`, '');
         updateStats();
+        
         if (!authorized || !autoPlayVideo) return;
+        
+        // ★ 修改2：大幅缩短等待视频出现的时间（V_WAIT 改为了 8 秒，避免空等）
         const video = await waitNewVideo(oldKeys, V_WAIT);
         if (!video) { addLog('⏳ 未检测到新视频（跳过）', ''); return; }
+        
         processingVideo = true; updateRunButtons();
         setStatus(`🎬 检测到新视频，正在 ${videoSpeed} 倍速静音播放…`, 'running');
         addLog(`🎬 检测到视频，${videoSpeed}x 静音播放中…`, '');
@@ -881,6 +805,7 @@
         catch (e) { reportErr('播放异常', e, false); }
         finally { processingVideo = false; updateRunButtons(); }
     }
+
     let loopRunning = false;
     async function mainLoop() {
         if (loopRunning || !isRunning) return;
@@ -892,49 +817,38 @@
                 await doClick();
                 if (!isRunning) break;
                 if (isPaused) continue;
-                await waitDelay(randDelay());
+                
+                // ★ 修改3：明确生成延迟时间，并在面板打印倒计时日志
+                const delayMs = randDelay();
+                const delaySec = (delayMs / 1000).toFixed(1);
+                addLog(`⏳ 等待 ${delaySec} 秒后继续...`, '');
+                
+                await waitDelay(delayMs);
             }
         } finally { loopRunning = false; }
     }
 
-    /* ===== startClicking（三分支） ===== */
     async function startClicking() {
         if (isRunning) return;
         if (manualPicking) exitPick(false);
-
         await sleep(800);
-
-        if (isLearningActivityPage()) {
-            addLog('✅ 学习活动页，直接开始刷课', 'ok');
-        }
-        else if (isChapterListPage()) {
-            await autoEnterFirstLesson();
-            return;
-        }
-
-        if (!selectedEls.length && !authorized) {
-            setStatus('请先手动选择元素，或授权后自动处理', '');
-            addLog('⚠️ 无法开始：未授权且未选择任何元素', 'err');
-            return;
-        }
+        if (isLearningActivityPage()) { addLog('✅ 学习活动页，直接开始刷课', 'ok'); }
+        else if (isChapterListPage()) { await autoEnterFirstLesson(); return; }
+        if (!selectedEls.length && !authorized) { setStatus('请先手动选择元素，或授权后自动处理', ''); addLog('⚠️ 无法开始：未授权且未选择任何元素', 'err'); return; }
         interruptDelay();
         try { if (worker) worker.postMessage({ cmd: 'stop' }); } catch (e) {}
         isRunning = true; isPaused = false; processingVideo = false; preparing = false;
         clickIndex = 0; clickedTotal = 0;
-
         if (authorized && !selectedEls.length) {
             preparing = true; updateRunButtons();
             addLog('▶ 开始运行 - 准备阶段', 'ok');
-
             setStatus('⏳ 准备中：展开目录（第 1/2 轮）…', 'running');
             await expandAll();
             if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在展开阶段停止', 'err'); return; }
             await sleep(EXPAND_ROUND_GAP);
-
             setStatus('⏳ 准备中：展开目录（第 2/2 轮）…', 'running');
             await expandAll();
             if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在展开阶段停止', 'err'); return; }
-
             setStatus('⏳ 准备中：自动选择元素…', 'running');
             await autoPick();
             if (!isRunning) { preparing = false; updateRunButtons(); addLog('■ 用户在选择阶段停止', 'err'); return; }
@@ -942,17 +856,10 @@
         } else if (authorized && selectedEls.length) {
             addLog(`▶ 使用已选择的 ${selectedEls.length} 个元素（跳过展开）`, 'ok');
         }
-
-        if (!selectedEls.length) {
-            isRunning = false; preparing = false; updateRunButtons();
-            setStatus('⚠️ 未找到可点击元素', '');
-            addLog('⚠️ 未找到可点击元素', 'err');
-            return;
-        }
-
+        if (!selectedEls.length) { isRunning = false; preparing = false; updateRunButtons(); setStatus('⚠️ 未找到可点击元素', ''); addLog('⚠️ 未找到可点击元素', 'err'); return; }
         runStats.start = Date.now(); runStats.vCount = 0; runStats.vSec = 0; runStats.last = 0;
         updateStats(); enableKA(); updateRunButtons();
-        setStatus('开始执行…（随机间隔 2~12 秒）', 'running');
+        setStatus('开始执行…（随机间隔 5~15 秒）', 'running');
         addLog(`▶ 正式开始（${selectedEls.length} 个元素，${authorized && autoPlayVideo ? videoSpeed + 'x 自动播放' : '⚠ 未开启自动播放'}）`, authorized && autoPlayVideo ? 'ok' : 'err');
         mainLoop();
     }
@@ -960,8 +867,7 @@
     function resumeClicking() { if (!isRunning || !isPaused) return; isPaused = false; setStatus('▶ 继续执行…', 'running'); addLog('▶ 继续', 'ok'); updateRunButtons(); }
     function stopClicking() {
         if (!isRunning) { setStatus('当前未运行', ''); return; }
-        clearResume();
-        isRunning = false; isPaused = false; preparing = false;
+        clearResume(); isRunning = false; isPaused = false; preparing = false;
         interruptDelay(); disableKA();
         try { if (worker) worker.postMessage({ cmd: 'stop' }); } catch (e) {}
         clearClickHighlight();
@@ -978,36 +884,19 @@
         catch (e) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); setStatus('📋 日志已复制', 'ok'); } catch (err) { setStatus('❌ 复制失败', ''); } document.body.removeChild(ta); }
     }
 
-    /* ===== 门户页提示弹窗（右上角） ===== */
     function showPortalTip() {
         if (document.getElementById('qcc-portal-tip')) return;
-        const tip = document.createElement('div');
-        tip.id = 'qcc-portal-tip';
+        const tip = document.createElement('div'); tip.id = 'qcc-portal-tip';
         tip.innerHTML = `
-            <div class="qcc-tip-header">
-                <span class="qcc-tip-icon">⚡</span>
-                <span class="qcc-tip-title">国开自动刷课 · 操作指引</span>
-                <button class="qcc-tip-close" id="qcc-tip-close" title="关闭">×</button>
-            </div>
+            <div class="qcc-tip-header"><span class="qcc-tip-icon">⚡</span><span class="qcc-tip-title">国开自动刷课 · 操作指引</span><button class="qcc-tip-close" id="qcc-tip-close" title="关闭">×</button></div>
             <div class="qcc-tip-body">
-                <div class="qcc-tip-step">
-                    <span class="qcc-tip-num">1</span>
-                    <span class="qcc-tip-text">选择你要学习的课程</span>
-                </div>
-                <div class="qcc-tip-step">
-                    <span class="qcc-tip-num">2</span>
-                    <span class="qcc-tip-text">点【去学习】进入课程页面</span>
-                </div>
-                <div class="qcc-tip-step">
-                    <span class="qcc-tip-num">3</span>
-                    <span class="qcc-tip-text">在课程页面点【▶ 开始】</span>
-                </div>
+                <div class="qcc-tip-step"><span class="qcc-tip-num">1</span><span class="qcc-tip-text">选择你要学习的课程</span></div>
+                <div class="qcc-tip-step"><span class="qcc-tip-num">2</span><span class="qcc-tip-text">点【去学习】进入课程页面</span></div>
+                <div class="qcc-tip-step"><span class="qcc-tip-num">3</span><span class="qcc-tip-text">在课程页面点【▶ 开始】</span></div>
                 <div class="qcc-tip-footer">✨ 之后就可以自动学习了</div>
-            </div>
-        `;
+            </div>`;
         const s = document.createElement('style');
-        s.textContent = `
-#qcc-portal-tip{position:fixed;right:20px;top:100px;width:280px;background:rgba(255,255,255,.95);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.22),0 8px 24px rgba(15,23,42,.12),0 0 0 .5px rgba(15,23,42,.08);z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#1d1d1f;font-size:13px;box-sizing:border-box;overflow:hidden;animation:qccTipIn .35s cubic-bezier(.2,1.2,.4,1)}
+        s.textContent = `#qcc-portal-tip{position:fixed;right:20px;top:100px;width:280px;background:rgba(255,255,255,.95);backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);border-radius:16px;box-shadow:0 20px 60px rgba(15,23,42,.22),0 8px 24px rgba(15,23,42,.12),0 0 0 .5px rgba(15,23,42,.08);z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:#1d1d1f;font-size:13px;box-sizing:border-box;overflow:hidden;animation:qccTipIn .35s cubic-bezier(.2,1.2,.4,1)}
 @keyframes qccTipIn{from{opacity:0;transform:translateX(20px) scale(.94)}to{opacity:1;transform:translateX(0) scale(1)}}
 #qcc-portal-tip *{box-sizing:border-box}
 .qcc-tip-header{display:flex;align-items:center;gap:6px;padding:11px 14px;background:linear-gradient(135deg,#6EBBCE 0%,#4f9db8 100%);color:#fff;font-weight:600}
@@ -1020,20 +909,14 @@
 .qcc-tip-step:last-of-type{border-bottom:0}
 .qcc-tip-num{flex:0 0 20px;height:20px;line-height:20px;text-align:center;border-radius:50%;background:linear-gradient(180deg,#34d17a 0%,#12b76a 100%);color:#fff;font-size:11px;font-weight:700;box-shadow:0 2px 6px rgba(18,183,106,.3)}
 .qcc-tip-text{flex:1;font-size:12px;color:#3a3a3c;line-height:1.55;padding-top:1px}
-.qcc-tip-footer{margin-top:10px;padding:9px 12px;background:linear-gradient(135deg,rgba(52,209,122,.12) 0%,rgba(18,183,106,.12) 100%);border-radius:9px;font-size:11.5px;font-weight:600;color:#0e8f52;text-align:center;letter-spacing:.01em}
-`;
-        document.head.appendChild(s);
-        document.body.appendChild(tip);
-
+.qcc-tip-footer{margin-top:10px;padding:9px 12px;background:linear-gradient(135deg,rgba(52,209,122,.12) 0%,rgba(18,183,106,.12) 100%);border-radius:9px;font-size:11.5px;font-weight:600;color:#0e8f52;text-align:center;letter-spacing:.01em}`;
+        document.head.appendChild(s); document.body.appendChild(tip);
         document.getElementById('qcc-tip-close').addEventListener('click', () => {
-            tip.style.transition = 'opacity .2s, transform .2s';
-            tip.style.opacity = '0';
-            tip.style.transform = 'translateX(10px) scale(.94)';
+            tip.style.transition = 'opacity .2s, transform .2s'; tip.style.opacity = '0'; tip.style.transform = 'translateX(10px) scale(.94)';
             setTimeout(() => tip.remove(), 200);
         });
     }
 
-    /* ===== 授权弹窗 ===== */
     function openDonate() {
         if (document.getElementById('qcc-donate-modal')) return;
         const m = document.createElement('div'); m.id = 'qcc-donate-modal';
@@ -1042,33 +925,20 @@
                 <div class="qcc-donate-emoji">❤️</div>
                 <div class="qcc-donate-title">感谢您的支持</div>
                 <div class="qcc-donate-desc">如果这个脚本帮到了您，<br>欢迎随意打赏一杯咖啡～</div>
-                <div class="qcc-donate-links">
-                    <div class="qcc-donate-qq">QQ：3365137745</div>
-                    <div class="qcc-donate-qq">群号：1124065231</div>
-                </div>
+                <div class="qcc-donate-links"><div class="qcc-donate-qq">QQ：3365137745</div><div class="qcc-donate-qq">群号：1124065231</div></div>
                 <div class="qcc-donate-note">授权后可解锁「自动播放视频」和「全自动展开」</div>
-                <div class="qcc-trial-card">
-                    <div class="qcc-trial-head"><span class="qcc-trial-label">🎁 半天试用卡</span><button class="qcc-trial-copy" id="qcc-trial-copy">复制</button></div>
-                    <div class="qcc-trial-code">${TRIAL}</div>
-                </div>
+                <div class="qcc-trial-card"><div class="qcc-trial-head"><span class="qcc-trial-label">🎁 半天试用卡</span><button class="qcc-trial-copy" id="qcc-trial-copy">复制</button></div><div class="qcc-trial-code">${TRIAL}</div></div>
                 <div class="qcc-donate-auth" id="qcc-donate-auth">
                     <div class="qcc-donate-auth-title">🔐 卡密验证</div>
-                    <div class="qcc-donate-auth-row">
-                        <input type="text" class="qcc-auth-input" id="qcc-donate-auth-input" placeholder="请输入卡密" autocomplete="off">
-                        <button class="qcc-auth-btn" id="qcc-donate-auth-btn">确认</button>
-                    </div>
+                    <div class="qcc-donate-auth-row"><input type="text" class="qcc-auth-input" id="qcc-donate-auth-input" placeholder="请输入卡密" autocomplete="off"><button class="qcc-auth-btn" id="qcc-donate-auth-btn">确认</button></div>
                     <div class="qcc-auth-msg" id="qcc-donate-auth-msg">输入卡密后点击「确认」解锁功能</div>
                 </div>
                 <button class="qcc-donate-close" id="qcc-donate-close">关闭</button>
             </div>`;
         document.body.appendChild(m);
-        const inp = document.getElementById('qcc-donate-auth-input');
-        const btn = document.getElementById('qcc-donate-auth-btn');
-        const msg = document.getElementById('qcc-donate-auth-msg');
-        const wrap = document.getElementById('qcc-donate-auth');
+        const inp = document.getElementById('qcc-donate-auth-input'); const btn = document.getElementById('qcc-donate-auth-btn'); const msg = document.getElementById('qcc-donate-auth-msg'); const wrap = document.getElementById('qcc-donate-auth');
         document.getElementById('qcc-trial-copy').addEventListener('click', async () => {
-            const b = document.getElementById('qcc-trial-copy');
-            let ok = false;
+            const b = document.getElementById('qcc-trial-copy'); let ok = false;
             try { await navigator.clipboard.writeText(TRIAL); ok = true; }
             catch (e) { const ta = document.createElement('textarea'); ta.value = TRIAL; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); ok = true; } catch (err) {} document.body.removeChild(ta); }
             if (ok) { b.textContent = '已复制'; b.classList.add('copied'); if (inp && !inp.disabled) inp.value = TRIAL; setTimeout(() => { b.textContent = '复制'; b.classList.remove('copied'); }, 1500); }
@@ -1084,14 +954,7 @@
             const r = await doVerify(inp.value);
             btn.disabled = false;
             if (r.ok) { sync(); setStatus(r.msg, ''); addLog('🔐 卡密验证成功', 'ok'); setTimeout(close, 1200); }
-            else {
-                msg.textContent = r.msg; msg.className = 'qcc-auth-msg err';
-                setStatus(r.msg.replace(/[✅❌⚠️]\s*/g, ''), '');
-                addLog('🔐 ' + r.msg.replace(/[✅❌⚠️]\s*/g, ''), 'err');
-                wrap.classList.remove('qcc-shake'); void wrap.offsetWidth; wrap.classList.add('qcc-shake');
-                try { inp.focus(); inp.select(); } catch (e) {}
-                btn.textContent = '确认';
-            }
+            else { msg.textContent = r.msg; msg.className = 'qcc-auth-msg err'; setStatus(r.msg.replace(/[✅❌⚠️]\s*/g, ''), ''); addLog('🔐 ' + r.msg.replace(/[✅❌⚠️]\s*/g, ''), 'err'); wrap.classList.remove('qcc-shake'); void wrap.offsetWidth; wrap.classList.add('qcc-shake'); try { inp.focus(); inp.select(); } catch (e) {} btn.textContent = '确认'; }
         };
         btn.addEventListener('click', tryAuth);
         inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tryAuth(); } });
@@ -1103,35 +966,20 @@
         if (!authorized) setTimeout(() => { try { inp.focus(); } catch (e) {} }, 120);
     }
 
-    /* ===== 面板 ===== */
     function buildPanel() {
         if (document.getElementById('quick-custom-clicker')) return;
-        loadCfg();
-        loadTheme();
-        panel = document.createElement('div');
-        panel.id = 'quick-custom-clicker';
+        loadCfg(); loadTheme();
+        panel = document.createElement('div'); panel.id = 'quick-custom-clicker';
         panel.innerHTML = `
             <div class="qcc-header" id="qcc-drag">
-                <div class="qcc-header-left">
-                    <span class="qcc-logo">⚡</span>
-                    <span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span>
-                    <span class="qcc-title-text qcc-title-short">国开学习</span>
-                    <span class="qcc-badge">v5.4.9</span>
-                </div>
-                <div class="qcc-header-right">
-                    <button class="qcc-icon-btn" id="qcc-min">−</button>
-                    <button class="qcc-icon-btn" id="qcc-close">×</button>
-                </div>
+                <div class="qcc-header-left"><span class="qcc-logo">⚡</span><span class="qcc-title-text qcc-title-full">国开刷点击次数和时长</span><span class="qcc-title-text qcc-title-short">国开学习</span><span class="qcc-badge">v5.5.0</span></div>
+                <div class="qcc-header-right"><button class="qcc-icon-btn" id="qcc-min">−</button><button class="qcc-icon-btn" id="qcc-close">×</button></div>
             </div>
             <div class="qcc-body" id="qcc-body">
                 <div class="qcc-section">
                     <div class="qcc-section-title">
                         <span>⚙️</span>
-                        <span class="qcc-theme-mini">
-                            <span class="qcc-theme-label" data-theme="light">浅</span>
-                            <label class="qcc-switch qcc-theme-switch-mini"><input type="checkbox" id="qcc-theme-toggle"><span class="qcc-switch-slider"></span></label>
-                            <span class="qcc-theme-label" data-theme="dark">深</span>
-                        </span>
+                        <span class="qcc-theme-mini"><span class="qcc-theme-label" data-theme="light">浅</span><label class="qcc-switch qcc-theme-switch-mini"><input type="checkbox" id="qcc-theme-toggle"><span class="qcc-switch-slider"></span></label><span class="qcc-theme-label" data-theme="dark">深</span></span>
                         <span class="qcc-auth-tip" id="qcc-auth-tip">授权后可全自动学习</span>
                         <span class="qcc-auth-time" id="qcc-auth-time">未授权</span>
                     </div>
@@ -1141,33 +989,20 @@
                     </div>
                     <div class="qcc-field qcc-field-block" id="qcc-speed-block">
                         <div class="qcc-field-head"><label>视频倍速</label><span class="qcc-speed-value" id="qcc-speed-value">2x</span></div>
-                        <div class="qcc-speed-btns" id="qcc-speed-btns">
-                            <button class="qcc-speed-btn active" data-speed="2">2x</button><button class="qcc-speed-btn" data-speed="4">4x</button><button class="qcc-speed-btn" data-speed="6">6x</button><button class="qcc-speed-btn" data-speed="8">8x</button><button class="qcc-speed-btn" data-speed="10">10x</button>
-                        </div>
+                        <div class="qcc-speed-btns" id="qcc-speed-btns"><button class="qcc-speed-btn active" data-speed="2">2x</button><button class="qcc-speed-btn" data-speed="4">4x</button><button class="qcc-speed-btn" data-speed="6">6x</button><button class="qcc-speed-btn" data-speed="8">8x</button><button class="qcc-speed-btn" data-speed="10">10x</button></div>
                     </div>
                 </div>
                 <div class="qcc-section">
                     <div class="qcc-section-title" id="qcc-execute-title">▶️ 执行</div>
-                    <div class="qcc-btn-group">
-                        <button id="qcc-start" class="qcc-btn qcc-btn-success"><span class="qcc-btn-icon">▶</span> 开始</button>
-                        <button id="qcc-pause" class="qcc-btn qcc-btn-ghost" disabled><span class="qcc-btn-icon">⏸</span> 暂停</button>
-                        <button id="qcc-stop" class="qcc-btn qcc-btn-danger"><span class="qcc-btn-icon">■</span> 停止</button>
-                    </div>
-                    <div class="qcc-field qcc-field-row qcc-field-compact qcc-row-with-btn">
-                        <label>模拟手动</label><span class="qcc-interval-value">2~12s 随机学习</span>
-                        <button id="qcc-auto-pick" class="qcc-inline-btn"><span class="qcc-btn-icon">👆</span> 手动选择</button>
-                    </div>
+                    <div class="qcc-btn-group"><button id="qcc-start" class="qcc-btn qcc-btn-success"><span class="qcc-btn-icon">▶</span> 开始</button><button id="qcc-pause" class="qcc-btn qcc-btn-ghost" disabled><span class="qcc-btn-icon">⏸</span> 暂停</button><button id="qcc-stop" class="qcc-btn qcc-btn-danger"><span class="qcc-btn-icon">■</span> 停止</button></div>
+                    <div class="qcc-field qcc-field-row qcc-field-compact qcc-row-with-btn"><label>模拟手动</label><span class="qcc-interval-value">2~12s 随机学习</span><button id="qcc-auto-pick" class="qcc-inline-btn"><span class="qcc-btn-icon">👆</span> 手动选择</button></div>
                     <div class="qcc-btn-group qcc-btn-group-sm"><button id="qcc-donate" class="qcc-btn qcc-btn-donate qcc-btn-sm"><span class="qcc-btn-icon">❤️</span> 捐赠 / 授权</button></div>
                 </div>
                 <div class="qcc-status" id="qcc-status"><span class="qcc-status-dot"></span><span id="qcc-status-text">等待操作</span></div>
                 <div class="qcc-log-box">
                     <div class="qcc-picked-bar"><span>已选择学习的目标的数量</span><span class="qcc-list-count" id="qcc-list-count">0个</span></div>
                     <div class="qcc-log-header"><span>📊 运行统计 · 日志</span><span class="qcc-log-actions"><button class="qcc-log-reset" id="qcc-log-export">导出</button><button class="qcc-log-reset" id="qcc-log-reset">重置</button></span></div>
-                    <div class="qcc-stat-compact">
-                        <span>运行 <b id="qcc-stat-runtime">00:00:00</b></span>
-                        <span>视频 <b id="qcc-stat-video">0分钟</b> (<b id="qcc-stat-videos">0个</b>)</span>
-                        <span>点击 <b id="qcc-stat-clicks">0次</b></span>
-                    </div>
+                    <div class="qcc-stat-compact"><span>运行 <b id="qcc-stat-runtime">00:00:00</b></span><span>视频 <b id="qcc-stat-video">0分钟</b> (<b id="qcc-stat-videos">0个</b>)</span><span>点击 <b id="qcc-stat-clicks">0次</b></span></div>
                     <div class="qcc-log-list" id="qcc-log-list"><div class="qcc-log-empty">暂无日志</div></div>
                 </div>
             </div>`;
@@ -1341,19 +1176,11 @@
 #quick-custom-clicker.qcc-dark .qcc-speed-btn{background:rgba(255,255,255,.08);color:#c7c7cc;border-color:rgba(255,255,255,.12)}
 #quick-custom-clicker.qcc-dark .qcc-speed-btn.active{background:linear-gradient(180deg,#6b85ff 0%,#5b78ff 100%);color:#fff;border-color:transparent}
 `;
-        document.head.appendChild(s);
-        document.body.appendChild(panel);
-        applyScale();
-        applyTheme();
+        document.head.appendChild(s); document.body.appendChild(panel);
+        applyScale(); applyTheme();
 
-        statusEl = document.getElementById('qcc-status');
-        statusTextEl = document.getElementById('qcc-status-text');
-        listCountEl = document.getElementById('qcc-list-count');
-        logListEl = document.getElementById('qcc-log-list');
-        statRT = document.getElementById('qcc-stat-runtime');
-        statV = document.getElementById('qcc-stat-video');
-        statVC = document.getElementById('qcc-stat-videos');
-        statC = document.getElementById('qcc-stat-clicks');
+        statusEl = document.getElementById('qcc-status'); statusTextEl = document.getElementById('qcc-status-text'); listCountEl = document.getElementById('qcc-list-count'); logListEl = document.getElementById('qcc-log-list');
+        statRT = document.getElementById('qcc-stat-runtime'); statV = document.getElementById('qcc-stat-video'); statVC = document.getElementById('qcc-stat-videos'); statC = document.getElementById('qcc-stat-clicks');
 
         if (logTimer) clearInterval(logTimer);
         logTimer = setInterval(() => { updateStats(); updateAuthTime(); }, 1000);
@@ -1366,23 +1193,17 @@
         if (themeToggle) { themeToggle.checked = isDarkTheme; themeToggle.addEventListener('change', () => { isDarkTheme = themeToggle.checked; applyTheme(); }); }
         panel.querySelectorAll('.qcc-theme-label').forEach(l => { l.addEventListener('click', () => { isDarkTheme = (l.dataset.theme === 'dark'); applyTheme(); }); });
 
-        const av = document.getElementById('qcc-auto-video');
-        const sb = document.getElementById('qcc-speed-block');
-        const sv = document.getElementById('qcc-speed-value');
-        const speedBtns = panel.querySelectorAll('.qcc-speed-btn');
-        const mci = document.getElementById('qcc-max-clicks');
+        const av = document.getElementById('qcc-auto-video'); const sb = document.getElementById('qcc-speed-block'); const sv = document.getElementById('qcc-speed-value');
+        const speedBtns = panel.querySelectorAll('.qcc-speed-btn'); const mci = document.getElementById('qcc-max-clicks');
         mci.value = String(maxClicks || 0);
         mci.addEventListener('input', () => { const n = parseInt(mci.value, 10); maxClicks = (isNaN(n) || n < 0) ? 0 : n; saveCfg(); });
         mci.addEventListener('blur', () => { mci.value = String(maxClicks || 0); });
 
         syncAuthUI = function () {
             updatePickBtn();
-            const avEl = document.getElementById('qcc-auto-video');
-            const mcEl = document.getElementById('qcc-max-clicks');
-            const sBlk = document.getElementById('qcc-speed-block');
-            const eT = document.getElementById('qcc-execute-title');
-            const aL = document.getElementById('qcc-auto-video-label');
-            const aTip = document.getElementById('qcc-auth-tip');
+            const avEl = document.getElementById('qcc-auto-video'); const mcEl = document.getElementById('qcc-max-clicks');
+            const sBlk = document.getElementById('qcc-speed-block'); const eT = document.getElementById('qcc-execute-title');
+            const aL = document.getElementById('qcc-auto-video-label'); const aTip = document.getElementById('qcc-auth-tip');
             if (authorized) {
                 loadCfg();
                 if (avEl) { avEl.disabled = false; avEl.checked = autoPlayVideo; }
@@ -1394,8 +1215,7 @@
                 if (sv) sv.textContent = videoSpeed + 'x';
                 speedBtns.forEach(b => b.classList.toggle('active', parseInt(b.dataset.speed, 10) === videoSpeed));
             } else {
-                autoPlayVideo = false;
-                videoSpeed = 1;
+                autoPlayVideo = false; videoSpeed = 1;
                 if (avEl) { avEl.checked = false; avEl.disabled = true; }
                 if (mcEl) { mcEl.value = '0'; mcEl.disabled = true; maxClicks = 0; }
                 if (aL) aL.textContent = '自动播放 🔒';
@@ -1408,30 +1228,16 @@
             updateAuthTime();
             if (authorized && manualPicking) exitPick(false);
         };
-        function syncVUI() {
-            av.checked = autoPlayVideo;
-            sb.classList.toggle('qcc-hidden', !authorized || !autoPlayVideo);
-            sv.textContent = videoSpeed + 'x';
-            speedBtns.forEach(b => b.classList.toggle('active', parseInt(b.dataset.speed, 10) === videoSpeed));
-            updateRunButtons();
-        }
-        function flashDonate() {
-            const b = document.getElementById('qcc-donate');
-            if (!b) return;
-            b.style.transition = 'all .2s'; b.style.transform = 'scale(1.08)'; b.style.boxShadow = '0 0 0 4px rgba(255,77,125,.3)';
-            setTimeout(() => { b.style.transform = 'scale(1)'; b.style.boxShadow = ''; }, 400);
-        }
+        function syncVUI() { av.checked = autoPlayVideo; sb.classList.toggle('qcc-hidden', !authorized || !autoPlayVideo); sv.textContent = videoSpeed + 'x'; speedBtns.forEach(b => b.classList.toggle('active', parseInt(b.dataset.speed, 10) === videoSpeed)); updateRunButtons(); }
+        function flashDonate() { const b = document.getElementById('qcc-donate'); if (!b) return; b.style.transition = 'all .2s'; b.style.transform = 'scale(1.08)'; b.style.boxShadow = '0 0 0 4px rgba(255,77,125,.3)'; setTimeout(() => { b.style.transform = 'scale(1)'; b.style.boxShadow = ''; }, 400); }
+        
         av.addEventListener('click', e => {
             if (!authorized) { e.preventDefault(); av.checked = false; autoPlayVideo = false; syncVUI(); setStatus('🔒 请点击【❤️ 捐赠 / 授权】解锁「自动播放视频」', ''); flashDonate(); return; }
-            autoPlayVideo = av.checked; syncVUI(); saveCfg();
-            setStatus(`自动播放视频: ${autoPlayVideo ? '开启' : '关闭'}`, '');
-            addLog(`⚙️ 自动播放视频 ${autoPlayVideo ? '开启' : '关闭'}`, '');
+            autoPlayVideo = av.checked; syncVUI(); saveCfg(); setStatus(`自动播放视频: ${autoPlayVideo ? '开启' : '关闭'}`, ''); addLog(`⚙️ 自动播放视频 ${autoPlayVideo ? '开启' : '关闭'}`, '');
         });
         speedBtns.forEach(b => b.addEventListener('click', () => {
             if (!authorized) { setStatus('🔒 请先授权', ''); return; }
-            videoSpeed = parseInt(b.dataset.speed, 10) || 2; syncVUI(); saveCfg();
-            setStatus(`视频倍速已设为 ${videoSpeed}x`, '');
-            addLog(`⚙️ 视频倍速 ${videoSpeed}x`, '');
+            videoSpeed = parseInt(b.dataset.speed, 10) || 2; syncVUI(); saveCfg(); setStatus(`视频倍速已设为 ${videoSpeed}x`, ''); addLog(`⚙️ 视频倍速 ${videoSpeed}x`, '');
         }));
         syncVUI();
 
@@ -1441,12 +1247,7 @@
         document.getElementById('qcc-stop').addEventListener('click', stopClicking);
         document.getElementById('qcc-pause').addEventListener('click', () => { if (isPaused) resumeClicking(); else pauseClicking(); });
 
-        function toggleCollapse() {
-            const b = document.getElementById('qcc-body');
-            const c = b.classList.toggle('collapsed');
-            panel.classList.toggle('qcc-collapsed', c);
-            document.getElementById('qcc-min').textContent = c ? '+' : '−';
-        }
+        function toggleCollapse() { const b = document.getElementById('qcc-body'); const c = b.classList.toggle('collapsed'); panel.classList.toggle('qcc-collapsed', c); document.getElementById('qcc-min').textContent = c ? '+' : '−'; }
         document.getElementById('qcc-min').addEventListener('click', e => { e.stopPropagation(); toggleCollapse(); });
         document.getElementById('qcc-close').addEventListener('click', () => {
             stopHB(); if (manualPicking) exitPick(false); stopClicking();
@@ -1456,21 +1257,14 @@
         });
 
         (function drag() {
-            const ed = document.getElementById('qcc-drag');
-            let dr = false, sx = 0, sy = 0, bl = 0, bt = 0;
+            const ed = document.getElementById('qcc-drag'); let dr = false, sx = 0, sy = 0, bl = 0, bt = 0;
             ed.addEventListener('mousedown', e => {
                 if (e.target.closest('.qcc-icon-btn')) return;
-                dr = true;
-                const z = parseFloat(panel.style.zoom) || 1;
-                sx = e.clientX; sy = e.clientY;
-                const r = panel.getBoundingClientRect();
-                bl = r.left / z; bt = r.top / z;
-                panel.style.right = 'auto'; panel.style.left = bl + 'px'; panel.style.top = bt + 'px';
-                e.preventDefault();
+                dr = true; const z = parseFloat(panel.style.zoom) || 1; sx = e.clientX; sy = e.clientY; const r = panel.getBoundingClientRect();
+                bl = r.left / z; bt = r.top / z; panel.style.right = 'auto'; panel.style.left = bl + 'px'; panel.style.top = bt + 'px'; e.preventDefault();
             });
             document.addEventListener('mousemove', e => {
-                if (!dr) return;
-                const z = parseFloat(panel.style.zoom) || 1;
+                if (!dr) return; const z = parseFloat(panel.style.zoom) || 1;
                 const nx = Math.max(0, Math.min(innerWidth / z - panel.offsetWidth, bl + (e.clientX - sx) / z));
                 const ny = Math.max(0, Math.min(innerHeight / z - 40, bt + (e.clientY - sy) / z));
                 panel.style.left = nx + 'px'; panel.style.top = ny + 'px';
@@ -1478,42 +1272,24 @@
             document.addEventListener('mouseup', () => { dr = false; });
         })();
 
-        document.addEventListener('keydown', e => {
-            if (e.key === 'Escape') {
-                if (manualPicking) { exitPick(false); return; }
-                if (isRunning) stopClicking();
-            }
-        });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') { if (manualPicking) { exitPick(false); return; } if (isRunning) stopClicking(); } });
 
         updatePickBtn(); renderList(); updateRunButtons();
         if (syncAuthUI) try { syncAuthUI(); } catch (e) {}
         (async () => {
-            await loadAuth();
-            updatePickBtn();
+            await loadAuth(); updatePickBtn();
             if (syncAuthUI) try { syncAuthUI(); } catch (e) {}
             setStatus(authorized ? '✅ 已授权，点开始自动运行' : (authCode ? '⚠️ 上次验证未通过' : '等待操作'), '');
-
-            // 页面刷新后检测续跑标志
-            if (authorized && getResume()) {
-                addLog('🔄 检测到续跑标志，2.5 秒后自动开始', 'ok');
-                await sleep(2500);
-                clearResume();
-                startClicking();
-            }
+            if (authorized && getResume()) { addLog('🔄 检测到续跑标志，2.5 秒后自动开始', 'ok'); await sleep(2500); clearResume(); startClicking(); }
         })();
     }
 
     function safeBuild() {
         try {
             if (!document.body) { setTimeout(safeBuild, 50); return; }
-            // ★ 门户页 → 只显示提示，不加载面板
-            if (location.hostname === 'menhu.pt.ouchn.cn') {
-                showPortalTip();
-                return;
-            }
+            if (location.hostname === 'menhu.pt.ouchn.cn') { showPortalTip(); return; }
             buildPanel();
-        }
-        catch (e) { reportErr('面板构建失败', e, false); }
+        } catch (e) { reportErr('面板构建失败', e, false); }
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', safeBuild, { once: true });
     else safeBuild();
